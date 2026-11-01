@@ -118,7 +118,25 @@ For each discovered candidate, store where available:
 - A failed chain, registry, API, or RPC request must be recorded with chain/source/block context.
 - Retry transient failures with bounded backoff and rate-limit awareness.
 - Never convert missing data into an empty market or position set.
-### 2.5 Workflow 1 failure handling
+- Record pagination cursors and checkpoints so discovery can resume without skipping results.
+- Clearly identify chains and markets whose discovery coverage is incomplete.
+
+### 2.6 Chain-scoped runs, reports, and reuse
+
+- Every manual run must require one EVM chain ID. A run processes that chain only; it must not silently expand to other chains.
+- The forward-risk horizon is a run parameter, defaulting to 30 days.
+- Each run must produce a human-readable Markdown report and a machine-readable JSON dataset containing the collected market and position-candidate records, source provenance, timestamps, configuration, and coverage status.
+- Store the latest pair and immutable per-run snapshots under `data/market-discovery/{chain_id}/`:
+  - `latest.md` and `latest.json`
+  - `snapshots/{UTC timestamp}.md` and `snapshots/{UTC timestamp}.json`
+- The JSON document is the canonical input for later workflows. The Markdown document is its human-readable companion.
+- Reuse the saved market catalogue when it is within its configured cache lifetime; refresh dynamic position-risk candidates on every run. A force-refresh input must bypass the market cache.
+- If a refresh fails, retain the last successful dataset where available, mark it stale, and record the failure. Never present stale data as a fresh successful scan.
+- Do not discard older snapshots when writing a new latest report.
+
+### 2.7 Initial implementation status
+
+The first implementation provides chain-scoped market enumeration, a Morpho GraphQL near-risk candidate feed, JSON/Markdown output, retained snapshots, and reuse of the saved market catalogue. Its current candidate query is bounded to health factor <= 1.25. It does not yet perform on-chain borrower/market verification or the exact 30-day interest-accrual projection required by Section 2.2; those results must remain explicitly unknown until that calculation path is implemented. This status note does not waive the functional requirements above.
 
 ---
 
