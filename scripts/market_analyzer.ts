@@ -1,4 +1,4 @@
-import { createPublicClient, defineChain, http, parseAbiItem, type Address, type Hex } from "viem";
+import { createPublicClient, defineChain, formatUnits, http, parseAbiItem, type Address, type Hex } from "viem";
 import { getChainAddress } from "@morpho-org/morpho-ts";
 import { createAdaptiveRpcFetch } from "./rpc_rate_limiter.js";
 
@@ -180,21 +180,27 @@ async function main() {
       item.timing_method = timing.search_method ?? "checked_immediately_before_liquidation";
       item.timing_limit_blocks = timing.search_limit_blocks ?? null;
       item.monotonicity_assumption = timing.monotonicity_assumption ?? null;
-      if (timing.status === "delayed" && timing.first_eligible_block !== null && timing.delay_blocks > 0) {
+      if (["delayed", "lower_bound_only"].includes(timing.status) && timing.first_eligible_block !== null && timing.delay_blocks > 0) {
         const firstBlock = await client.getBlock({ blockNumber: BigInt(timing.first_eligible_block) });
         item.delay_seconds = Number(eventBlock.timestamp - firstBlock.timestamp);
         const priceBlock = log.blockNumber > 0n ? log.blockNumber - 1n : log.blockNumber;
         const oraclePrice = await client.readContract({ address: p.oracle, abi: ORACLE_ABI, functionName: "price", blockNumber: priceBlock });
         const collateralValueInLoan = down(a.seizedAssets, oraclePrice, PRICE_SCALE);
         const grossProfit = collateralValueInLoan - a.repaidAssets;
+        const loanKey = String(p.loanToken).toLowerCase();
+        if (!decimalsCache.has(loanKey)) decimalsCache.set(loanKey, Number(await client.readContract({ address: p.loanToken, abi: ERC20_ABI, functionName: "decimals", blockNumber: priceBlock })));
+        const loanDecimals = decimalsCache.get(loanKey)!;
         item.profit_calculated = true;
         item.profit = {
           method: "oracle_value_of_collateral_seized_minus_debt_repaid",
           loan_token: p.loanToken,
+          loan_token_decimals: loanDecimals,
           gross_profit_loan_token_raw: grossProfit.toString(),
+          gross_profit_loan_token: formatUnits(grossProfit, loanDecimals),
           oracle_price_raw: oraclePrice.toString(),
           usdc_token_address: usdc || null,
           gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null,
+          gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null,
           usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted",
           excludes_gas_and_execution_costs: true,
           warning: "Gross oracle-valued surplus, not realized net profit. USDC value is populated only when the market loan token is the configured USDC token.",
