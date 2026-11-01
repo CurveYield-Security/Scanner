@@ -1,11 +1,12 @@
 {
   "name": "curveyield-morpho-scanner",
   "private": true,
-  "version": "1.0.0",
-  "description": "Read-only Morpho Blue market discovery workflow",
+  "version": "1.1.0",
+  "description": "Read-only Morpho Blue market discovery and direct liquidation analysis workflows",
   "type": "module",
   "scripts": {
-    "market-discovery": "tsx scripts/market_discovery.ts"
+    "market-discovery": "tsx scripts/market_discovery.ts",
+    "market-analyzer": "tsx scripts/market_analyzer.ts"
   },
   "dependencies": {
     "@morpho-org/morpho-ts": "4.1.0",
