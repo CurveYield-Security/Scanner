@@ -123,8 +123,8 @@ async function main(){
  let markets:any[],marketStatus="refreshed",marketError:string|null=null,marketFetchedAt=cachedAt??null,reused=false;
  if(fresh){markets=previous.markets.map((m:any)=>normalizeMarket(m,chainId));marketStatus="reused_cached_catalogue";reused=true;}
  else{try{markets=await marketsFor(chainId);marketFetchedAt=new Date().toISOString();}catch(e){marketError=String(e);if(Array.isArray(previous?.markets)){markets=previous.markets.map((m:any)=>normalizeMarket(m,chainId));marketStatus="stale_cache_after_refresh_failure";reused=true;}else{markets=[];marketStatus="failed_no_catalogue";}}}
- const chainName=(ChainUtils as any).CHAIN_METADATA?.[chainId]?.name??("Chain "+chainId);
- const morpho=getAddress(getChainAddress(chainId,"blue")),rpc=await rpcFor(chainId,process.env.RPC_URL);
+ const chainName=chainId===747474?"Katana":((ChainUtils as any).CHAIN_METADATA?.[chainId]?.name??("Chain "+chainId));
+ const morpho=getAddress(chainId===747474?"0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc":getChainAddress(chainId,"blue")),rpc=await rpcFor(chainId,process.env.RPC_URL);
  const chain=defineChain({id:chainId,name:chainName,nativeCurrency:{name:"Native",symbol:"NATIVE",decimals:18},rpcUrls:{default:{http:[rpc.url]}},contracts:{multicall3:{address:MULTICALL3}}});
  const client=createPublicClient({chain,transport:http(rpc.url,{timeout:30000,retryCount:2,fetchFn:createAdaptiveRpcFetch()})});
  if(await client.getChainId()!==chainId)throw new Error("RPC chain id mismatch");
