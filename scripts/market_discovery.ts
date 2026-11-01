@@ -50,6 +50,12 @@ function wm(x:bigint,y:bigint){return down(x,y,WAD);}
 function taylor(r:bigint,s:bigint){const a=r*s,b=down(a,a,2n*WAD),c=down(b,a,3n*WAD);return a+b+c;}
 function assetsUp(sh:bigint,assets:bigint,shares:bigint){return up(sh,assets+VA,shares+VS);}
 const paramsHash=(p:any)=>keccak256(encodeAbiParameters([{type:"tuple",components:PARAMS}],[p]));
+function normalizeMarket(x:any,chainId:number):any {
+ const p={loanToken:getAddress(x.loan_token),collateralToken:getAddress(x.collateral_token),oracle:getAddress(x.oracle_address),irm:getAddress(x.irm_address),lltv:bi(x.lltv_wad,"lltv")};
+ const id=String(x.market_id).toLowerCase();
+ if(!/^0x[0-9a-f]{64}$/.test(id))throw new Error("Invalid market id");
+ return {...x,chain_id:chainId,market_id:id,loan_token:p.loanToken,collateral_token:p.collateralToken,oracle_address:p.oracle,irm_address:p.irm,lltv_wad:p.lltv.toString(),params_hash_matches_market_id:paramsHash(p).toLowerCase()===id,params:p};
+}
 const query = [
 "query MarketPositions($chainIds: [Int!]!, $first: Int!, $skip: Int!) {",
 " marketPositions(where: { chainId_in: $chainIds }, orderBy: HealthFactor, orderDirection: Asc, first: $first, skip: $skip) {",
@@ -66,10 +72,7 @@ async function marketsFor(chainId:number):Promise<any[]>{
   if(!Array.isArray(res.data))throw new Error("Morpho markets response missing data");
   for(const x of res.data){
    if(Number(x.chain_id)!==chainId)throw new Error("Market response chain mismatch");
-   const p={loanToken:getAddress(x.loan_token),collateralToken:getAddress(x.collateral_token),oracle:getAddress(x.oracle_address),irm:getAddress(x.irm_address),lltv:bi(x.lltv_wad,"lltv")};
-   const id=String(x.market_id).toLowerCase();
-   if(!/^0x[0-9a-f]{64}$/.test(id))throw new Error("Invalid market id");
-   all.set(id,{chain_id:chainId,market_id:id,loan_token:p.loanToken,collateral_token:p.collateralToken,oracle_address:p.oracle,irm_address:p.irm,lltv_wad:p.lltv.toString(),creation_block_number:x.creation_block_number??null,creation_timestamp:x.creation_timestamp??null,params_hash_matches_market_id:paramsHash(p).toLowerCase()===id,params:p});
+   const parsed=normalizeMarket(x,chainId);all.set(parsed.market_id,parsed);
   }
   cursor=typeof res.cursor==="string"&&res.cursor?res.cursor:null;
   if(!cursor)return [...all.values()].sort((a,b)=>a.market_id.localeCompare(b.market_id));
@@ -123,20 +126,26 @@ async function main(){
  const started=new Date(),cachedAt=previous?.coverage?.market_catalogue_fetched_at;
  const fresh=!force&&Array.isArray(previous?.markets)&&cachedAt&&started.getTime()-Date.parse(cachedAt)<CACHE_HOURS*3600000;
  let markets:any[],marketStatus="refreshed",marketError:string|null=null,marketFetchedAt=cachedAt??null,reused=false;
- if(fresh){markets=previous.markets;marketStatus="reused_cached_catalogue";reused=true;}
- else{try{markets=await marketsFor(chainId);marketFetchedAt=new Date().toISOString();}catch(e){marketError=String(e);if(!Array.isArray(previous?.markets))throw e;markets=previous.markets;marketStatus="stale_cache_after_refresh_failure";reused=true;}}
+ if(fresh){markets=previous.markets.map((m:any)=>normalizeMarket(m,chainId));marketStatus="reused_cached_catalogue";reused=true;}
+ else{try{markets=await marketsFor(chainId);marketFetchedAt=new Date().toISOString();}catch(e){marketError=String(e);if(!Array.isArray(previous?.markets))throw e;markets=previous.markets.map((m:any)=>normalizeMarket(m,chainId));marketStatus="stale_cache_after_refresh_failure";reused=true;}}
  const chainName=(ChainUtils as any).CHAIN_METADATA?.[chainId]?.name??("Chain "+chainId);
  const morpho=getAddress(getChainAddress(chainId,"blue")),rpc=await rpcFor(chainId,process.env.RPC_URL);
  const chain=defineChain({id:chainId,name:chainName,nativeCurrency:{name:"Native",symbol:"NATIVE",decimals:18},rpcUrls:{default:{http:[rpc.url]}},contracts:{multicall3:{address:MULTICALL3}}});
  const client=createPublicClient({chain,transport:http(rpc.url,{timeout:30000,retryCount:2})});
  if(await client.getChainId()!==chainId)throw new Error("RPC chain id mismatch");
- if(!(await client.getBytecode({address:morpho})))throw new Error("Morpho singleton has no code");
+ const morphoCode=await client.getBytecode({address:morpho});if(!morphoCode||morphoCode==="0x")throw new Error("Morpho singleton has no code");
  const block=await client.getBlock({blockTag:"latest"}),now=block.timestamp,horizon=BigInt(days)*86400n;
- const prior=new Map((previous?.markets??[]).filter((m:any)=>m.onchain_verification_status==="verified").map((m:any)=>[m.market_id,m]));
+ const prior=new Map((previous?.markets??[]).filter((m:any)=>["verified","verified_cached_immutable_params"].includes(m.onchain_verification_status)).map((m:any)=>[m.market_id,m]));
  for(const m of markets){if(prior.has(m.market_id)&&m.params_hash_matches_market_id){m.onchain_verification_status="verified_cached_immutable_params";m.onchain_verification_block=prior.get(m.market_id).onchain_verification_block??null;}}
  const verify=markets.filter(m=>m.onchain_verification_status!=="verified_cached_immutable_params");
- const verified=await client.multicall({allowFailure:true,batchSize:250,contracts:verify.map(m=>({address:morpho,abi:MORPHO_ABI,functionName:"idToMarketParams" as const,args:[m.market_id as Hex] as const}))});
- verify.forEach((m,i)=>{const r=verified[i];if(!m.params_hash_matches_market_id)m.onchain_verification_status="failed_market_id_hash_mismatch";else if(r?.status!=="success")m.onchain_verification_status="unavailable_onchain_read";else if(!sameParams(r.result,m.params))m.onchain_verification_status="failed_onchain_params_mismatch";else{m.onchain_verification_status="verified";m.onchain_verification_block=Number(block.number);}});
+ const multicallCode=await client.getBytecode({address:MULTICALL3});
+ if(multicallCode&&multicallCode!=="0x"){
+  const verified=await client.multicall({allowFailure:true,batchSize:250,contracts:verify.map(m=>({address:morpho,abi:MORPHO_ABI,functionName:"idToMarketParams" as const,args:[m.market_id as Hex] as const}))});
+  verify.forEach((m,i)=>{const r=verified[i];if(!m.params_hash_matches_market_id)m.onchain_verification_status="failed_market_id_hash_mismatch";else if(r?.status!=="success")m.onchain_verification_status="unavailable_onchain_read";else if(!sameParams(r.result,m.params))m.onchain_verification_status="failed_onchain_params_mismatch";else{m.onchain_verification_status="verified";m.onchain_verification_block=Number(block.number);}});
+ }else{
+  const results=await limit(verify,8,async m=>{try{return await client.readContract({address:morpho,abi:MORPHO_ABI,functionName:"idToMarketParams",args:[m.market_id as Hex]});}catch{return null;}});
+  verify.forEach((m,i)=>{const r=results[i];if(!m.params_hash_matches_market_id)m.onchain_verification_status="failed_market_id_hash_mismatch";else if(!r)m.onchain_verification_status="unavailable_onchain_read";else if(!sameParams(r,m.params))m.onchain_verification_status="failed_onchain_params_mismatch";else{m.onchain_verification_status="verified";m.onchain_verification_block=Number(block.number);}});
+ }
  const index=await allPositions(chainId);
  const byId=new Map(markets.map(m=>[m.market_id,m])),marketIds=[...new Set(index.rows.map(r=>r.market_id))];
  const contexts=new Map<string,any>();
