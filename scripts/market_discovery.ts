@@ -101,14 +101,8 @@ async function allPositions(chainId:number):Promise<{rows:any[],pages:number,raw
  throw new Error("Position pagination safety limit; partial inventory rejected");
 }
 async function rpcFor(chainId:number,provided?:string){
- if(provided)return{url:provided,source:"configured_chain_secret"}
- const chains=await json("https://chainid.network/chains.json");
- const c=chains.find((x:any)=>Number(x.chainId)===chainId);
- const urls=(c?.rpc??[]).map((x:any)=>typeof x==="string"?x:x?.url).filter((x:any)=>typeof x==="string"&&x.startsWith("https://")&&!/[{}]/.test(x)&&!/apikey|api-key|your[_-]?key|infura|alchemy/i.test(x));
- for(const url of urls.slice(0,8)){
-  try{const r=await json(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_chainId",params:[]})},1);if(Number(BigInt(r.result))===chainId)return{url,source:"chainid.network_public_rpc"};}catch{}
- }
- throw new Error("No chain-id-verified public RPC; provide rpc_url for chain "+chainId);
+ if(provided)return{url:provided,source:"configured_chain_secret"};
+ throw new Error("A configured chain RPC secret is required (RPC_KATANA for 747474; RPC_ETHEREUM for 1)");
 }
 function sameParams(a:any,b:any){return String(a.loanToken).toLowerCase()===b.loanToken.toLowerCase()&&String(a.collateralToken).toLowerCase()===b.collateralToken.toLowerCase()&&String(a.oracle).toLowerCase()===b.oracle.toLowerCase()&&String(a.irm).toLowerCase()===b.irm.toLowerCase()&&BigInt(a.lltv)===b.lltv;}
 async function tokenMetadata(chainId:number,ms:any[],previous:any){
@@ -226,7 +220,7 @@ async function main(){
  const assessmentByKey=new Map(evaluated.map(x=>[x.market_id+":"+x.borrower.toLowerCase(),x]));
  for(const x of index.rows){const a=assessmentByKey.get(x.market_id+":"+x.borrower.toLowerCase());lines.push("| "+x.market_id+" | "+x.borrower+" | "+(x.health_factor??"unknown")+" | "+(a?.current_health_factor??"unknown")+" | "+(a?.projected_health_factor??"unknown")+" | "+(a?.classification??"not_evaluated")+" |");}
  lines.push("","## Method and limitations","","- The JSON document retains the complete Morpho GraphQL position inventory returned for this chain.","- Market ids are checked against keccak256(abi.encode(MarketParams)); immutable market parameters are verified against Morpho idToMarketParams.","- Candidate positions are read from the Morpho singleton at the recorded block. Eligibility uses Morpho's rounding rules: borrow assets round up; collateral value and LLTV capacity round down.","- Accrued interest uses Morpho's wTaylorCompounded formula and the IRM borrowRateView.","- The forward scenario assumes constant current borrow rate and constant current oracle price. Future rate changes, market activity, and oracle movements can change outcomes.","- Every position returned by the Morpho GraphQL inventory is individually read from the Morpho singleton, using Multicall3 batches of 250 where available and bounded direct-call fallback otherwise. The source does not expose indexer lag; completeness is therefore bounded by the indexer inventory and freshness.","- Read-only only; no transactions or contract deployments.","");
- lines.push("","## Sources","","- Morpho REST market catalogue: https://api.morpho.org/v1/blue/markets (chain-scoped, cursor-paginated).","- Morpho GraphQL position inventory: https://api.morpho.org/graphql (chain-scoped, offset-paginated).","- Morpho Blue singleton: "+morpho+"; market parameters, market state, and borrower positions read at block "+block.number+".","- Market oracle price() and configured IRM borrowRateView() read at the same block.","- Token metadata: Morpho REST /v0/tokens/{chainId}:{tokenAddress}.","- Optional RPC secret: MORPHO_RPC_URL; otherwise a public endpoint is selected and validated against eth_chainId.","");
+ lines.push("","## Sources","","- Morpho REST market catalogue: https://api.morpho.org/v1/blue/markets (chain-scoped, cursor-paginated).","- Morpho GraphQL position inventory: https://api.morpho.org/graphql (chain-scoped, offset-paginated).","- Morpho Blue singleton: "+morpho+"; market parameters, market state, and borrower positions read at block "+block.number+".","- Market oracle price() and configured IRM borrowRateView() read at the same block.","- Token metadata: Morpho REST /v0/tokens/{chainId}:{tokenAddress}.","- RPC secret is selected by chain ID: RPC_KATANA for Katana (747474) or RPC_ETHEREUM for Ethereum (1).","");
  const md=lines.join("\n"),stamp=started.toISOString().replace(/[-:.]/g,"")+"-run-"+runId,snap=path.join(root,"snapshots");
  await fs.mkdir(snap,{recursive:true});
  await fs.writeFile(path.join(root,"latest.json"),JSON.stringify(report,null,2)+"\n","utf8");
