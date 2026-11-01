@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v1  
+**Document version:** v2  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -118,8 +118,7 @@ For each discovered candidate, store where available:
 - A failed chain, registry, API, or RPC request must be recorded with chain/source/block context.
 - Retry transient failures with bounded backoff and rate-limit awareness.
 - Never convert missing data into an empty market or position set.
-- Record pagination cursors and checkpoints so discovery can resume without skipping results.
-- Clearly identify chains and markets whose discovery coverage is incomplete.
+### 2.5 Workflow 1 failure handling
 
 ---
 
