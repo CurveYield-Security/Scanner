@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v3
+# Workflow version: v4
 
 on:
   workflow_dispatch:
@@ -12,10 +12,6 @@ on:
         description: "Constant-rate forward liquidation-risk horizon in days"
         required: true
         default: "30"
-        type: string
-      rpc_url:
-        description: "Optional read-only RPC URL; otherwise a public endpoint is discovered and chain-id verified"
-        required: false
         type: string
       force_market_refresh:
         description: "Ignore saved market catalogue cache and fetch it again"
@@ -49,7 +45,7 @@ jobs:
         env:
           CHAIN_ID: ${{ inputs.chain_id }}
           FORWARD_HORIZON_DAYS: ${{ inputs.forward_horizon_days }}
-          RPC_URL: ${{ inputs.rpc_url }}
+          RPC_URL: ${{ secrets.MORPHO_RPC_URL }}
           FORCE_MARKET_REFRESH: ${{ inputs.force_market_refresh }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: npx tsx scripts/market_discovery.ts
