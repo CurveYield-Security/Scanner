@@ -207,7 +207,7 @@ Profit calculation is strictly conditional:
 
 - Do not calculate profit for same-block, zero-delay, or unknown-timing events.
 - Calculate gross liquidation surplus only when a positive delay is established, including positive lower-bound-only delays.
-- Use the event's seized collateral amount, repaid debt amount, and market oracle price at the execution boundary to calculate collateral value in the loan token, then subtract debt repaid.
+- Use the event's seized collateral amount, repaid debt amount, and market oracle price at the liquidation block boundary to calculate collateral value in the loan token, then subtract debt repaid. Record that the oracle observation is block-end state, not the exact transaction-index state.
 - Report gross surplus in raw and decimal-adjusted loan-token units.
 - If the loan token is the configured chain USDC token, also report the same value as USDC. Do not imply that a non-USDC loan-token amount is a USDC quote.
 - Do not calculate profit on any other liquidation event.
