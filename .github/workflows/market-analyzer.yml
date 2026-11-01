@@ -1,7 +1,11 @@
 name: Morpho Market Analyzer
-# Workflow version: v3
+# Workflow version: v4
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/market-analyzer.yml'
   workflow_dispatch:
     inputs:
       chain_id:
@@ -56,7 +60,7 @@ jobs:
         run: npx esbuild scripts/market_analyzer.ts --bundle --platform=node --format=esm --external:viem --external:@morpho-org/morpho-ts --outfile=/tmp/market_analyzer.js
       - name: Validate configured chain RPC secret
         env:
-          RPC_URL: ${{ inputs.chain_id == '747474' && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
+          RPC_URL: ${{ (github.event_name == 'push' || inputs.chain_id == '747474') && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
         run: |
           if [ -z "$RPC_URL" ]; then
             echo "Missing RPC_KATANA for chain 747474 or RPC_ETHEREUM for chain 1."
@@ -64,12 +68,12 @@ jobs:
           fi
       - name: Query chain-wide liquidation events and analyze execution delay
         env:
-          CHAIN_ID: ${{ inputs.chain_id }}
-          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
-          MIN_DELAYED_EVENTS_PER_MARKET: ${{ inputs.min_delayed_events_per_market }}
-          MAX_READINESS_LOOKBACK_BLOCKS: ${{ inputs.max_readiness_lookback_blocks }}
-          RPC_URL: ${{ inputs.chain_id == '747474' && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
-          USDC_TOKEN_ADDRESS: ${{ inputs.chain_id == '747474' && '0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36' || inputs.chain_id == '1' && '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' || '' }}
+          CHAIN_ID: ${{ github.event_name == 'push' && '747474' || inputs.chain_id }}
+          LOOKBACK_DAYS: ${{ github.event_name == 'push' && '90' || inputs.lookback_days }}
+          MIN_DELAYED_EVENTS_PER_MARKET: ${{ github.event_name == 'push' && '2' || inputs.min_delayed_events_per_market }}
+          MAX_READINESS_LOOKBACK_BLOCKS: ${{ github.event_name == 'push' && '50000' || inputs.max_readiness_lookback_blocks }}
+          RPC_URL: ${{ (github.event_name == 'push' || inputs.chain_id == '747474') && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
+          USDC_TOKEN_ADDRESS: ${{ (github.event_name == 'push' || inputs.chain_id == '747474') && '0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36' || inputs.chain_id == '1' && '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' || '' }}
           SUSHI_API_KEY: ${{ secrets.SUSHI_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: npx tsx scripts/market_analyzer.ts
@@ -81,6 +85,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No analyzer document changes to commit."
           else
-            git commit -m "Save Morpho liquidation analysis for chain ${{ inputs.chain_id }}"
+            git commit -m "Save Morpho liquidation analysis for chain ${{ github.event_name == 'push' && '747474' || inputs.chain_id }}"
             git push
           fi
