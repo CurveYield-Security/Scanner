@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v6  
+**Document version:** v7  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -136,14 +136,14 @@ For each discovered candidate, store where available:
 
 ### 2.7 Market Discovery implementation status
 
-The current implementation is Market Discovery collector v8 and workflow v6.
+The current implementation is Market Discovery collector v10 and workflow v6.
 
 **Collection and persistence**
 - One run is scoped to one required EVM chain ID.
 - Morpho REST `GET /v1/blue/markets` is cursor-paginated to enumerate the selected chain's indexed Blue market catalogue.
 - Morpho GraphQL `marketPositions` is paginated without a health-factor cutoff to retain the full position inventory exposed by the index for that chain.
 - Each run writes `latest.md`, `latest.json`, and immutable timestamped Markdown/JSON snapshots under `data/market-discovery/{chain_id}/`.
-- JSON contains the full indexed position inventory, market catalogue, token metadata, risk-evaluation results, source provenance, block context, configuration, and coverage status. Markdown includes the market catalogue, evaluated risk candidates, and the complete indexed position inventory.
+- JSON contains the full indexed position inventory, market catalogue, token metadata, on-chain market risk contexts, risk-evaluation results, source provenance, block context, configuration, and coverage status. Markdown includes the complete market catalogue, on-chain market risk contexts, evaluated risk candidates, and the indexed position inventory.
 - The market catalogue is reused for 24 hours unless forced to refresh. Token metadata is reused; unavailable metadata is retried on subsequent runs. Immutable market-parameter verification is reused after a successful on-chain check. Position inventory and risk state are refreshed each run.
 - If market or position-index refresh fails, the previous saved dataset is retained and marked stale/incomplete rather than reported as a fresh empty result.
 - A repository-wide concurrency group serializes report commits so simultaneous chain runs cannot race while updating the shared repository.
@@ -160,7 +160,7 @@ The current implementation is Market Discovery collector v8 and workflow v6.
 
 **Coverage qualifications**
 - Morpho GraphQL does not expose its indexer lag in the position response. The full set of rows returned by the index is retained, but the result cannot claim the index is synchronized with the latest block.
-- GraphQL uses offset pagination. Concurrent index updates can shift rows between pages; duplicates are deduplicated and unique row totals are compared with the API-reported total. Any discrepancy must remain visible as a coverage limitation.
+- GraphQL uses offset pagination. Concurrent index updates can shift rows between pages; duplicates are deduplicated and unique row totals are compared with the API-reported total. Missing totals or a unique-row discrepancy are explicitly marked as incomplete pagination.
 - Candidate prefiltering means the on-chain evaluation set is not the entire borrower universe. The report distinguishes indexed inventory from positions individually verified and classified.
 - If the selected chain has no Morpho SDK deployment address, no valid RPC, no Morpho bytecode, or missing market/oracle/IRM state, the affected records are reported as unavailable or the run fails before publishing misleading results.
 - An optional GitHub Actions secret named `MORPHO_RPC_URL` can supply a read-only RPC endpoint. Otherwise the workflow discovers a public endpoint and verifies its `eth_chainId` before reading.
