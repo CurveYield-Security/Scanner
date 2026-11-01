@@ -24,7 +24,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: market-analyzer-${{ inputs.chain_id }}
+  group: morpho-scanner-repository-documents
   cancel-in-progress: false
 
 jobs:
