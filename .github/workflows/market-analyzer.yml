@@ -70,7 +70,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/market-analysis/
+          git add data/market-analysis/ package-lock.json
           if git diff --cached --quiet; then
             echo "No analyzer document changes to commit."
           else
