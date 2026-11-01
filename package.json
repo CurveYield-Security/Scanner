@@ -1,0 +1,15 @@
+{
+  "name": "curveyield-morpho-scanner",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Read-only Morpho Blue market discovery workflow",
+  "type": "module",
+  "scripts": {
+    "market-discovery": "tsx scripts/market_discovery.ts"
+  },
+  "dependencies": {
+    "@morpho-org/morpho-ts": "4.1.0",
+    "tsx": "4.20.5",
+    "viem": "2.38.5"
+  }
+}
