@@ -1,9 +1,9 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v15  
+**Document version:** v16  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
-**Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
+**Scope:** Independent Morpho Blue market discovery and direct chain-wide liquidation analysis  
 **Architecture constraint:** Exactly three workflows. This document specifies their responsibilities and interfaces; it does not authorize trading or on-chain transactions.
 
 ---
@@ -12,13 +12,12 @@
 
 The Scanner identifies Morpho Blue markets where liquidation events repeatedly remain executable for one or more blocks before a liquidator acts. It reports those markets as potential harvesting opportunities and estimates the liquidation reward's current USDC value by requesting a DEX-aggregator quote.
 
-The system has exactly three workflows:
+The system has exactly two independent workflows:
 
-1. **Market Discovery** — enumerate Morpho Blue markets and discover positions that are currently liquidatable or forecast to become liquidatable within a configurable horizon.
-2. **Liquidation Event Indexer** — index all Morpho Blue liquidation events in the trailing 90-day period and maintain the historical event dataset.
-3. **Harvestable Market Analyzer** — determine the first executable block for each indexed liquidation, calculate its block delay, identify markets with repeated delayed events, and quote each event's liquidation reward into USDC.
+1. **Market Discovery** — enumerate Morpho Blue markets and discover positions that are currently liquidatable or forecast to become liquidatable within a configurable horizon. Its output is a standalone risk report; it does not feed the analyzer.
+2. **Market Analyzer** — query the shared Morpho Blue singleton's chain-wide `Liquidate` event stream directly, process each event individually, determine readiness-to-execution delay, and calculate gross liquidation surplus only for events with a positive delay.
 
-There is no fourth workflow, trading bot, transaction executor, dashboard service, or separate profitability workflow in this scope. Shared code and data schemas may be used by the three workflows; they do not constitute additional workflows.
+There is no liquidation event indexer, market-catalogue handoff, trading bot, transaction executor, dashboard service, or separate profitability workflow. Each workflow runs independently.
 
 ### 1.1 Core defaults
 
@@ -111,7 +110,7 @@ For each discovered candidate, store where available:
 - Refresh active-market and risky-position data on a configurable schedule.
 - Recheck candidates against fresh on-chain state before publishing them as currently liquidatable.
 - Retain historical snapshots needed to compare changes in position risk.
-- Expose a machine-readable market catalogue and current/forward-risk candidate dataset for Workflows 2 and 3.
+- Expose a machine-readable market catalogue and current/forward-risk candidate dataset for standalone discovery reporting. The Market Analyzer does not consume this output.
 
 ### 2.5 Workflow 1 failure handling
 
@@ -129,14 +128,14 @@ For each discovered candidate, store where available:
 - Store the latest pair and immutable per-run snapshots under `data/market-discovery/{chain_id}/`:
   - `latest.md` and `latest.json`
   - `snapshots/{UTC timestamp}.md` and `snapshots/{UTC timestamp}.json`
-- The JSON document is the canonical input for later workflows. The Markdown document is its human-readable companion.
+- The JSON document is the canonical Market Discovery output. The Markdown document is its human-readable companion; neither is an input dependency for the Market Analyzer.
 - Reuse the saved market catalogue when it is within its configured cache lifetime; refresh dynamic position-risk candidates on every run. A force-refresh input must bypass the market cache.
 - If a refresh fails, retain the last successful dataset where available, mark it stale, and record the failure. Never present stale data as a fresh successful scan.
 - Do not discard older snapshots when writing a new latest report.
 
 ### 2.7 Market Discovery implementation status
 
-The current implementation is Market Discovery collector v18 and workflow v6.
+The current implementation is Market Discovery collector v19 and workflow v7.
 
 **Collection and persistence**
 - One run is scoped to one required EVM chain ID.
@@ -145,7 +144,7 @@ The current implementation is Market Discovery collector v18 and workflow v6.
 - Each run writes `latest.md`, `latest.json`, and immutable timestamped Markdown/JSON snapshots under `data/market-discovery/{chain_id}/`.
 - JSON contains the full indexed position inventory, all on-chain position assessments, the market catalogue, token metadata, on-chain market risk contexts, risk-candidate shortlist, source provenance, block context, configuration, and coverage status. Markdown includes the complete market catalogue, token metadata, on-chain market risk contexts, detailed risk candidates, and the full indexed position inventory with current and projected assessments.
 - The Markdown report starts with a ranked shortlist of up to 10 markets containing currently liquidatable, forecast-liquidatable, or unknown-risk positions. Each row groups positions by market and reports current/forecast/unknown counts and the earliest projected crossing; individual position details remain below.
-- Every run also writes `liquidation-indexer-input.json` and `liquidation-indexer-input.md`, plus timestamped snapshots. These enumerate every known market ID and its loan token, collateral token, oracle, IRM, LLTV, and verification status, alongside the chain's Morpho Blue singleton address. Morpho Blue markets are not separately deployed contracts: all markets on a chain share the singleton. The JSON is the canonical input for Workflow 2.
+- Market Discovery does not produce liquidation-indexer input files. Morpho Blue markets are IDs within one shared singleton per chain; the Market Analyzer resolves each market ID directly from the singleton when decoding chain-wide events.
 - The market catalogue is reused for 24 hours unless forced to refresh. Token metadata is reused; unavailable metadata is retried on subsequent runs. Immutable market-parameter verification is reused after a successful on-chain check. Position inventory and risk state are refreshed each run.
 - If market or position-index refresh fails, the previous saved dataset is retained and marked stale/incomplete rather than reported as a fresh empty result.
 - A repository-wide concurrency group serializes report commits so simultaneous chain runs cannot race while updating the shared repository.
@@ -165,206 +164,82 @@ The current implementation is Market Discovery collector v18 and workflow v6.
 - GraphQL uses offset pagination. Concurrent index updates can shift rows between pages; duplicates are deduplicated and unique row totals are compared with the API-reported total. Missing totals or a unique-row discrepancy are explicitly marked as incomplete pagination.
 - The on-chain evaluation set covers every borrower returned by the Morpho GraphQL inventory. The report still cannot guarantee that the index itself contains every current chain position or is synchronized to the latest block.
 - If the selected chain has no Morpho SDK deployment address, no valid RPC, no Morpho bytecode, or missing market/oracle/IRM state, the affected records are reported as unavailable or the run fails before publishing misleading results.
-- An optional GitHub Actions secret named `MORPHO_RPC_URL` can supply a read-only RPC endpoint. Otherwise the workflow discovers a public endpoint and verifies its `eth_chainId` before reading.
+- The workflow selects a read-only RPC secret by chain ID: `RPC_KATANA` for Katana (747474) and `RPC_ETHEREUM` for Ethereum (1). The RPC chain ID is verified before reading.
 - No wallet, signing key, transaction submission, contract deployment, or on-chain write path is present.
 
 This implementation materially advances the functional requirements but does not claim perfect global position completeness: source index freshness and offset-pagination consistency remain explicit limits.
 ---
 
-## 3. Workflow 2 — Liquidation Event Indexer
+## 3. Workflow 2 — Direct Chain-Wide Market Analyzer
 
 ### 3.1 Objective
 
-Build a complete, resumable dataset of Morpho Blue liquidation events over the trailing 90 days for every discovered deployment/market.
+Query Morpho Blue's shared singleton directly for every `Liquidate` event in the trailing 90-day window. Process events individually to determine how long each liquidation remained executable before execution. Calculate profit only for events where the readiness-to-execution delay is positive.
 
-### 3.2 Event indexing functions
+There is no separate event indexer. The analyzer does not consume Market Discovery output or iterate through a market catalogue. The singleton event stream is chain-wide; each event carries its market ID.
 
-1. Consume the verified deployment and market catalogue from Workflow 1.
-2. Determine the block range corresponding to the trailing 90 days on each chain.
-3. Query the `Liquidate(bytes32,address,address,uint256,uint256,uint256,uint256,uint256)` event from the chain-specific shared Morpho Blue singleton address in the indexer input. Filter by topic0; topic1 is the indexed market ID, topic2 the caller, and topic3 the borrower. A market is not a separate contract address. The catalogue enriches events and can optionally filter topic1.
-4. Decode and persist every liquidation event, preserving raw event/log data as well as normalized fields.
-5. Backfill historical events in bounded block ranges and continue incrementally from the last confirmed checkpoint. Derive the trailing 90-day start block from chain timestamps, then retrieve emitted logs with `eth_getLogs` or an equivalent archive/indexer log API. Split ranges to respect provider limits, persist progress, and retry incomplete ranges.
-6. Reconcile checkpoints and block hashes to detect chain reorganizations; remove or supersede orphaned log records and reprocess the affected range.
-7. Deduplicate by chain ID, transaction hash, and log index.
-8. Preserve events even when later analysis cannot reconstruct the exact executable block or quote a reward.
+### 3.2 Chain-wide event query
 
-### 3.3 Required event fields
+- Resolve the Morpho Blue singleton for the selected chain and verify deployed bytecode.
+- Query `Liquidate(bytes32,address,address,uint256,uint256,uint256,uint256,uint256)` logs from that singleton.
+- Filter by event signature only; leave indexed market-ID topic unrestricted so all markets are included.
+- Decode topic 1 as market ID, topic 2 as caller/liquidator, and topic 3 as borrower.
+- Derive the 90-day start block from block timestamps, not an assumed block rate.
+- Query bounded block ranges, shrink ranges when the RPC rejects them, deduplicate by transaction hash and log index, and preserve event ordering.
+- Resolve each event's market parameters directly from the singleton's `idToMarketParams(marketId)`. No Market Discovery catalogue is required.
+- Preserve raw event values, transaction hash, log index, block number/hash, timestamp, market ID, borrower, liquidator, repaid assets/shares, seized assets, and bad-debt fields.
 
-At minimum:
+### 3.3 Readiness-to-execution timing
 
-- Chain ID and Morpho Blue deployment address
-- Market ID
-- Borrower address
-- Liquidator address
-- Transaction hash and log index
-- Block number, block hash, and block timestamp
-- Debt/loan assets repaid (raw integer and normalized amount)
-- Collateral shares/assets seized (raw integer and normalized amount)
-- Loan and collateral token addresses and decimals
-- Raw decoded event payload
-- Indexing source, indexed-at timestamp, and canonicality status
+For each liquidation event, independently reconstruct the borrower's eligibility in historical blocks preceding execution:
 
-The implementation must use the actual event ABI and exact event semantics for the deployed Morpho Blue version. Field names in storage must not imply a value is available if the event does not contain it; any additional value reconstructed from state must be marked as reconstructed.
+- Read market state, borrower position, oracle price, and applicable IRM rate at the historical block.
+- Apply Morpho's debt-share-to-asset rounding, interest accrual, oracle scaling, and LLTV eligibility calculation.
+- Find the earliest supported block at which the position was eligible, then compare it with the liquidation block.
+- Record block delay as the primary metric and elapsed seconds as a secondary metric.
+- A zero-block delay is same-block or unresolved intra-block ordering. It is not a delayed event.
+- A positive block delay is a delayed event.
+- If the historical search limit is reached while the position remains eligible, preserve a positive lower-bound delay and label it `lower_bound_only`.
+- If historical reads fail or eligibility cannot be reconstructed, label the event `unknown`; never invent a readiness block.
 
-### 3.4 Coverage and completeness
+The current implementation brackets the earliest eligible block with exponential lookback and binary search. This assumes eligibility does not reverse inside the bracket; oracle movements can violate that assumption. The report must expose this assumption and distinguish boundary estimates from lower-bound and unknown results. Do not describe the result as an execution simulation: it is a historical state-based eligibility reconstruction.
 
-- The lookback is based on chain timestamps, not a single assumed block rate.
-- Block-range pagination must be resumable and rate-limit aware.
-- Store per-chain start/end blocks, completed ranges, and last canonical checkpoint.
-- Verify that indexed ranges are contiguous before marking a chain's 90-day backfill complete.
-- Reconcile indexed event counts against available authoritative indexed sources where possible, without treating a third-party indexer as the canonical record.
-- A chain with missing historical access or incomplete ranges must be marked incomplete, not complete with zero events.
+### 3.4 Conditional profit calculation
 
-### 3.5 Workflow 2 outputs
+Profit calculation is strictly conditional:
 
-- Canonical normalized liquidation-event dataset.
-- Raw event/log dataset for audit and re-decoding.
-- Per-chain indexing checkpoints and coverage status.
-- Market-level event counts over the configured lookback.
-- A stable event identifier used by Workflow 3.
+- Do not calculate profit for same-block, zero-delay, or unknown-timing events.
+- Calculate gross liquidation surplus only when a positive delay is established, including positive lower-bound-only delays.
+- Use the event's seized collateral amount, repaid debt amount, and market oracle price at the execution boundary to calculate collateral value in the loan token, then subtract debt repaid.
+- Report gross surplus in raw and decimal-adjusted loan-token units.
+- If the loan token is the configured chain USDC token, also report the same value as USDC. Do not imply that a non-USDC loan-token amount is a USDC quote.
+- Do not calculate profit on any other liquidation event.
+- Label the result as gross oracle-valued surplus, not realized net profit. Gas, financing, slippage, and execution costs are not included.
 
----
+### 3.5 RPC pacing and recovery
 
-## 4. Workflow 3 — Harvestable Market Analyzer
+All JSON-RPC HTTP requests made by either workflow must pass through the shared adaptive limiter:
 
-### 4.1 Objective
+- Start at 10 requests per second.
+- After more than three consecutive failed RPC requests (four failures), pause for 3 seconds, reduce the sustained rate by 1 request per second, and resume.
+- The minimum rate is 1 request per second.
+- A successful RPC response resets the consecutive-failure counter.
+- Serialize request starts through one limiter so concurrent application tasks cannot bypass the aggregate rate.
+- Apply the limiter to retries as well as initial requests. Never log RPC URLs or credentials.
 
-Identify markets with recurring non-same-block liquidation opportunities and report every qualifying event, its exact block delay from first executable eligibility, and the USDC quote for the liquidation reward tokens.
+### 3.6 Analyzer outputs
 
-A market is **harvestable under this scanner's historical rule** when at least two liquidation events in the trailing 90 days are confirmed to have become executable before the block in which they were liquidated.
-
-This is a historical opportunity signal, not a guarantee that a future liquidation will remain available or profitable.
-
-### 4.2 Reconstruct first executable block
-
-For every indexed liquidation event:
-
-1. Identify the borrower, market, and liquidation transaction.
-2. Reconstruct the relevant market, borrower position, and oracle state at historical blocks preceding the liquidation.
-3. Apply Morpho's exact liquidation eligibility and liquidation amount rules, including LLTV, oracle scaling, accrued interest, share/asset conversions, and contract rounding.
-4. Find the earliest block at which a liquidation transaction could have succeeded under the on-chain state and protocol rules.
-5. Confirm that the position remained eligible through the actual liquidation block, or represent any intervening ineligible period as a separate eligibility episode.
-6. Compare the first executable block with the actual liquidation block.
-
-The analyzer must distinguish:
-- **First observed eligible block:** earliest block for which available reconstructed state shows eligibility.
-- **First executable block:** earliest block for which the liquidation call could actually satisfy the contract's conditions and execute successfully.
-- **Liquidation block:** block containing the indexed liquidation transaction.
-
-Do not equate an unhealthy/low health-factor observation with executable liquidation unless the protocol's actual call conditions are met. Where historical state, oracle data, or required transaction context is missing, mark the event `unknown` or `lower_bound_only`; do not fabricate an exact executable block.
-
-### 4.3 Delay calculation
-
-For each event with a confirmed first executable block:
-
-`delay_blocks = liquidation_block_number - first_executable_block_number`
-
-- A result of `0` means the liquidation occurred in the same block in which it first became executable and is not a delayed event.
-- A result greater than `0` is a delayed liquidation and counts toward the market's two-event threshold.
-- Report elapsed seconds as a secondary metric using the timestamps of the relevant blocks. Block count is the primary requested measure.
-- Do not infer intra-block ordering from block numbers alone. If eligibility and liquidation occur in the same block, use transaction ordering/state immediately before the liquidation transaction where the available historical data permits. Otherwise mark intra-block ordering as unresolved.
-- Preserve the first executable block, evidence method, confidence, and calculation version for every result.
-
-### 4.4 Harvestable-market qualification
-
-- Default analysis window: trailing 90 days.
-- Default qualification threshold: at least **2 confirmed delayed liquidation events per market** in that window.
-- Only events with `delay_blocks > 0` and a sufficiently supported first executable block count toward the threshold.
-- Same-block events are retained in event-level output and market statistics, but do not count toward qualification.
-- Events with unknown or lower-bound-only timing are reported separately and do not count toward the confirmed threshold.
-- The threshold and lookback must be configurable without changing code.
-- Report the delayed-event count, total event count, delayed-event ratio, average/median delay, and timing coverage for each market.
-
-### 4.5 Liquidation reward and USDC quote calculation
-
-The objective is to estimate what the liquidation reward tokens for each historical event would quote to in USDC **at the time the analyzer runs**. The user does not want an estimate of what the original liquidator actually realized, nor a reconstruction of their later swaps or holdings.
-
-For each qualifying delayed event:
-
-1. Reconstruct the collateral amount seized and the debt amount repaid using the event and verified transaction state.
-2. Calculate the liquidator's protocol liquidation reward/incentive token amount using Morpho's exact liquidation math for that market and event. Do not treat the entire seized collateral principal as profit. The reward is the incentive portion attributable to liquidation, not the value of all collateral transferred.
-3. Request a swap quote for that reward-token amount into USDC on the same chain.
-4. Record the aggregator's quoted USDC output as the event's **estimated current gross reward value**.
-5. Do not subtract gas, flash-loan fees, or hypothetical execution costs from the headline value. The requested headline is the USDC quote itself. If later desired, such costs can be shown as separate optional context, not deducted from this metric.
-
-**Initial quote provider:** KyberSwap Aggregator API, subject to confirming supported chains, token pairs, current API terms, and rate limits during implementation. The provider interface should be replaceable so another aggregator can be used if Kyber does not support a chain or token. No API key is assumed to be required; use the documented client identification/header mechanism if applicable. Do not commit credentials or private keys to the repository.
-
-**Quote semantics:**
-- Quotes are current quotes requested at analysis time for the historical event's reward-token quantity. They are not historical prices at the liquidation block.
-- Use the exact chain ID, reward-token address, token decimals, input amount, and USDC token address for that chain.
-- Request a route/quote that represents executable swap output, not a spot-price lookup.
-- Record quote timestamp, provider, route identifier/details when available, quoted USDC output, input amount, quote status, and any provider error.
-- Apply sensible quote freshness and slippage/route constraints supported by the provider. Do not silently accept stale, zero, partial, or failed quotes as valid profit values.
-- If the reward amount is zero, the token is unsupported, no route exists, or the quote fails, retain the event and mark the quote unavailable with a reason.
-- Do not substitute a quote from another chain or assume bridged USDC is equivalent without an explicit supported route.
-- Do not aggregate missing quotes as zero.
-
-**Terminology:** The USDC quote is an estimate of the current gross value of the protocol liquidation reward. It is not proof of realized profit, net profit, or a guaranteed future execution price.
-
-### 4.6 Required event-level analyzer output
-
-For every indexed event, including non-qualifying and same-block events, retain:
-
-- Stable event ID, chain, market ID, borrower, and liquidator
-- Transaction hash, liquidation block, and timestamp
-- First observed eligible block, if known
-- First executable block, if established
-- Delay in blocks and elapsed seconds
-- Timing classification: `same_block`, `delayed`, `unknown`, or `lower_bound_only`
-- Evidence/confidence and missing-data reason
-- Debt repaid and collateral seized
-- Reward token address and calculated reward amount
-- USDC quote amount, quote timestamp, aggregator, route metadata, and quote status
-- Calculation and quote-provider versions
-
-### 4.7 Required market-level output
-
-For every market with at least two confirmed delayed events, publish:
-
-- Chain and market identity (market ID, loan token, collateral token, LLTV, oracle)
-- Total indexed liquidations in the 90-day window
-- Confirmed delayed liquidation count
-- Same-block liquidation count
-- Unknown/unresolved timing count
-- Delayed-event percentage among events with resolved timing
-- Average, median, minimum, and maximum delay in blocks
-- Average/median elapsed seconds
-- Per-event current USDC reward quote
-- Sum of available USDC quotes and number of events with valid quotes
-- Data coverage and quote coverage indicators
-
-The market report must contain a list of every delayed event that contributed to qualification, not merely summary statistics. It should also retain same-block and unresolved events in separate lists or fields so the user can assess the full sample.
-
-### 4.8 Ranking
-
-Rank qualifying markets using transparent, separately displayed measures rather than an opaque score. Primary ordering should favor:
-1. More confirmed delayed events;
-2. Higher median and average delay in blocks;
-3. Higher current USDC reward quote totals and per-event values;
-4. Better timing and quote coverage.
-
-Show the underlying values used for ordering. Do not allow a high quoted reward total from one event to conceal a market with only two delayed events or poor data coverage.
-
-### 4.9 Re-analysis and quote refresh
-
-- Reconstruct timing from the indexed historical data and persist calculation results with a version.
-- Refresh USDC quotes independently of event indexing so current reward-token values can be updated without re-indexing the chain.
-- Retain quote history or at minimum the latest quote timestamp and result; never present an old quote as current.
-- Re-run analysis when market/event data, calculation logic, or configuration changes.
-- A failed quote provider must not prevent timing analysis or market qualification.
+Write a machine-readable JSON report and a human-readable Markdown report under `data/market-analysis/{chain_id}/`, including immutable per-run snapshots. Retain every liquidation event and its timing classification. Only positive-delay events may contain a `profit` object. Report total event counts, delayed counts, same-block/unresolved counts, lower-bound-only counts, unknown counts, the historical block range, assumptions, and coverage.
 
 ---
-
 ## 5. Data contracts and workflow dependencies
 
-The workflows exchange durable, versioned records. A shared database or storage layer may be selected during implementation, but the workflows remain exactly three independently runnable jobs.
+The two workflows are independent and produce separate durable, versioned reports. There is no workflow-to-workflow data dependency.
 
 | Producer | Output | Consumer |
 |---|---|---|
-| Workflow 1 | Deployment and market catalogue | Workflows 2 and 3 |
-| Workflow 1 | Current/forward-risk position candidates | Workflow 3 and future discovery refreshes |
-| Workflow 2 | Canonical liquidation event records and checkpoints | Workflow 3 |
-| Workflow 3 | Event timing, reward calculations, USDC quotes, harvestable-market reports | User-facing reports/export |
+| Workflow 1 — Market Discovery | Market catalogue and current/forward-risk position reports | Standalone discovery output |
+| Workflow 2 — Market Analyzer | Chain-wide liquidation event timing and conditional gross-surplus analysis | Standalone analyzer output |
 
 Records must include chain IDs and contract/token addresses. Symbols and names are display metadata only and must never be used as unique identifiers.
 
@@ -374,11 +249,11 @@ All persisted datasets must include source provenance, observation/indexing time
 
 ## 6. Execution, scheduling, and resource boundaries
 
-- Implement exactly three GitHub Actions workflows, one corresponding to each section above.
+- Implement exactly two GitHub Actions workflows, one for Market Discovery and one for the Market Analyzer.
 - Each workflow must be independently runnable and resumable.
 - Workflow 1 must be able to refresh market discovery and forward-risk candidates without requiring a full historical re-index.
-- Workflow 2 must be able to backfill the initial 90-day period and then index incrementally.
-- Workflow 3 must be able to re-run timing analysis and refresh quotes without re-fetching every historical event.
+- Workflow 2 must be able to query the trailing 90-day chain-wide singleton event stream directly on each run.
+- Workflow 2 must perform timing analysis and conditional profit calculation in the same run; it must not depend on Workflow 1 or a separate event indexer.
 - Heavy historical reconstruction may use GitHub-hosted runner compute. Durable data must live in persistent storage, not only in ephemeral runner files or workflow artifacts.
 - Use bounded chunks, checkpoints, retries, and rate-limit handling. A workflow run completing is not proof that every chain/range was processed; publish explicit coverage/completion state.
 - Do not place API keys, RPC credentials, private keys, or other secrets in source files, committed configuration, logs, or public artifacts. Use repository/environment secrets for credentials if required.
@@ -397,7 +272,7 @@ The following settings should be externally configurable:
 - Discovery/indexing chunk sizes and request pacing
 - RPC/indexer/GraphQL endpoints and credentials, where required
 - USDC token address per supported chain
-- Aggregator provider and client identification
+- USDC token address per supported chain
 - Quote freshness and route constraints
 - Workflow schedules and manual run parameters
 
@@ -411,7 +286,7 @@ Configuration changes must be recorded with the resulting analysis so reports ca
 2. **No invented timing:** if the first executable block cannot be established, report unknown or a lower bound.
 3. **No false market qualification:** only two or more confirmed delayed events qualify by default.
 4. **No false profit claims:** USDC output is a current aggregator quote for the calculated reward amount, not historical realized profit or guaranteed net profit.
-5. **Reward math must be exact:** use the deployed Morpho implementation's liquidation calculations and rounding behavior.
+5. **Profit calculation is conditional:** only events with a positive readiness-to-execution delay receive a gross-surplus calculation.
 6. **Coverage must be visible:** missing chains, failed ranges, incomplete pagination, and unavailable historical state must be explicit.
 7. **Reorganizations must be handled:** event records and checkpoints must track canonical block hashes.
 8. **Forward estimates are conditional:** the 30-day projection assumes unchanged oracle price unless an explicitly documented alternative scenario is added.
@@ -426,10 +301,10 @@ When implemented and run successfully, the system should produce:
 
 - A cross-chain Morpho Blue market catalogue with verification and coverage metadata.
 - A current and 30-day-forward list of liquidation-risk positions, with assumptions stated.
-- A canonical, resumable trailing-90-day liquidation-event index.
+- A trailing-90-day chain-wide liquidation event report generated directly from the Morpho singleton.
 - For each event with sufficient historical data, the first executable block and exact block delay to liquidation.
 - A list of markets with at least two confirmed delayed events in the 90-day window.
-- For every delayed event in each qualifying market, the calculated liquidation reward token amount and its current KyberSwap (or configured replacement aggregator) USDC quote.
+- For every event with a positive readiness-to-execution delay, a gross-surplus calculation in the market loan token, with USDC denomination only when that loan token is the configured USDC token.
 - Clear unresolved/unsupported cases rather than fabricated values.
 
-This is the complete v1 functional scope for the three-workflow Morpho Liquidation Scanner.
+This is the v1 functional scope for the two-workflow Morpho Liquidation Scanner.
