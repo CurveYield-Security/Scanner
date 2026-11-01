@@ -1,11 +1,12 @@
 name: Market Discovery
-# Workflow version: v6
+# Workflow version: v7
 
 on:
   workflow_dispatch:
     inputs:
       chain_id:
-        description: "EVM chain ID to scan (one chain per run)"
+        description: "EVM chain ID to scan (Katana 747474 or Ethereum 1)"
+        default: "747474"
         required: true
         type: string
       forward_horizon_days:
@@ -48,11 +49,19 @@ jobs:
           fi
       - name: Validate Market Discovery TypeScript syntax
         run: npx esbuild scripts/market_discovery.ts --bundle --platform=node --format=esm --external:viem --external:@morpho-org/morpho-ts --outfile=/tmp/market_discovery.js
+      - name: Validate configured chain RPC secret
+        env:
+          RPC_URL: ${{ inputs.chain_id == '747474' && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
+        run: |
+          if [ -z "$RPC_URL" ]; then
+            echo "Missing RPC_KATANA for chain 747474 or RPC_ETHEREUM for chain 1."
+            exit 1
+          fi
       - name: Collect and verify Morpho Blue market data
         env:
           CHAIN_ID: ${{ inputs.chain_id }}
           FORWARD_HORIZON_DAYS: ${{ inputs.forward_horizon_days }}
-          RPC_URL: ${{ secrets.MORPHO_RPC_URL }}
+          RPC_URL: ${{ inputs.chain_id == '747474' && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
           FORCE_MARKET_REFRESH: ${{ inputs.force_market_refresh }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: npx tsx scripts/market_discovery.ts
