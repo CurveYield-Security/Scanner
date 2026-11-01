@@ -1,0 +1,57 @@
+name: Market Discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      chain_id:
+        description: "EVM chain ID to scan (one chain per run)"
+        required: true
+        type: string
+      forward_horizon_days:
+        description: "Forward liquidation-risk horizon in days"
+        required: true
+        default: "30"
+        type: string
+      force_market_refresh:
+        description: "Ignore saved market-catalogue cache and fetch again"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-discovery-${{ inputs.chain_id }}
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out saved discovery records
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Collect Morpho Blue market data
+        env:
+          CHAIN_ID: ${{ inputs.chain_id }}
+          FORWARD_HORIZON_DAYS: ${{ inputs.forward_horizon_days }}
+          FORCE_MARKET_REFRESH: ${{ inputs.force_market_refresh }}
+        run: python scripts/market_discovery.py
+      - name: Retain reports for future runs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/market-discovery/
+          if git diff --cached --quiet; then
+            echo "No discovery document changes to commit."
+          else
+            git commit -m "Save market discovery for chain ${{ inputs.chain_id }}"
+            git push
+          fi
