@@ -1,4 +1,4 @@
-// File version: v2
+// File version: v3
 import { createPublicClient, defineChain, formatUnits, http, parseAbiItem, type Address, type Hex } from "viem";
 import { getChainAddress } from "@morpho-org/morpho-ts";
 import { createAdaptiveRpcFetch } from "./rpc_rate_limiter.js";
@@ -34,6 +34,57 @@ const ERC20_ABI = [{ type: "function", name: "decimals", stateMutability: "view"
 const LIQUIDATE = parseAbiItem("event Liquidate(bytes32 indexed id,address indexed caller,address indexed borrower,uint256 repaidAssets,uint256 repaidShares,uint256 seizedAssets,uint256 badDebtAssets,uint256 badDebtShares)");
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// SushiSwap's quote endpoint is read-only. All Sushi HTTP requests are capped
+// at 2/s independently of the existing adaptive 10/s on-chain RPC limiter.
+let nextSushiRequestAt = 0;
+async function quoteSushiReward(chainId: number, tokenIn: string, tokenOut: string, amount: bigint, key?: string) {
+  if (chainId !== 747474 || amount <= 0n) throw new Error("Unsupported Sushi quote chain or amount");
+  const url = new URL("https://api.sushi.com/quote/v7/" + chainId);
+  url.searchParams.set("tokenIn", tokenIn);
+  url.searchParams.set("tokenOut", tokenOut);
+  url.searchParams.set("amount", amount.toString());
+  url.searchParams.set("maxSlippage", "0.005");
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (key) headers["x-api-key"] = key;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const wait = Math.max(0, nextSushiRequestAt - Date.now());
+    if (wait) await sleep(wait);
+    nextSushiRequestAt = Date.now() + 500;
+    let response: Response;
+    try {
+      response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
+    } catch {
+      if (attempt === 2) throw new Error("Sushi network request failed after three attempts");
+      await sleep((attempt + 1) * 1500);
+      continue;
+    }
+    if (!response.ok) {
+      if ((response.status === 429 || response.status >= 500) && attempt < 2) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const backoff = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(30000, retryAfter * 1000) : (attempt + 1) * 2500;
+        await sleep(backoff);
+        continue;
+      }
+      throw new Error("Sushi quote HTTP " + response.status + (response.status === 401 || response.status === 403 ? "; inspect SUSHI_API_KEY authorization" : ""));
+    }
+    const data: any = await response.json();
+    if (data?.status !== "Success") throw new Error("Sushi route status: " + String(data?.status ?? "missing"));
+    if (String(data.amountIn ?? "") !== amount.toString()) throw new Error("Sushi quote amountIn differs from requested amount");
+    const raw = data.assumedAmountOut;
+    if (typeof raw !== "string" || !/^\d+$/.test(raw) || BigInt(raw) <= 0n) throw new Error("Sushi returned no positive assumedAmountOut");
+    return {
+      provider: "SushiSwap", provider_api_version: "v7", status: "quoted",
+      quote_type: "current_read_only", quote_timestamp: new Date().toISOString(),
+      token_in: tokenIn, token_out: tokenOut,
+      amount_in_raw: amount.toString(), amount_out_raw: raw,
+      price_impact: typeof data.priceImpact === "number" ? data.priceImpact : null,
+      swap_price: typeof data.swapPrice === "number" ? data.swapPrice : null,
+      max_slippage_fraction: "0.005", response_status: data.status
+    };
+  }
+  throw new Error("Sushi quote retries exhausted");
+}
+
 function down(x: bigint, y: bigint, d: bigint) { return x * y / d; }
 function up(x: bigint, y: bigint, d: bigint) { return (x * y + d - 1n) / d; }
 function wm(x: bigint, y: bigint) { return down(x, y, WAD); }
@@ -98,6 +149,8 @@ async function main() {
   const rpcUrl = process.env.RPC_URL;
   const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
   const usdc = (process.env.USDC_TOKEN_ADDRESS ?? "").toLowerCase();
+  const sushiKey = process.env.SUSHI_API_KEY;
+  let usdcDecimals: number | null = null;
   const maxLookbackBlocks = BigInt(process.env.MAX_READINESS_LOOKBACK_BLOCKS ?? "50000");
   if (!Number.isSafeInteger(chainId) || chainId <= 0 || !Number.isSafeInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365 || !Number.isSafeInteger(minDelayedEvents) || minDelayedEvents < 1 || minDelayedEvents > 100) throw new Error("Invalid chain, lookback, or delayed-event threshold");
   if (!rpcUrl) throw new Error("Missing configured RPC secret (RPC_KATANA or RPC_ETHEREUM)");
@@ -217,6 +270,46 @@ async function main() {
           item.profit = { method: "oracle_value_of_collateral_seized_minus_debt_repaid", loan_token: p.loanToken, loan_token_decimals: loanDecimals, reward_token: p.collateralToken, reward_token_decimals: collateralDecimals, liquidation_reward_collateral_raw: rewardCollateral.toString(), liquidation_reward_collateral: formatUnits(rewardCollateral, collateralDecimals), gross_profit_loan_token_raw: grossProfit.toString(), gross_profit_loan_token: formatUnits(grossProfit, loanDecimals), oracle_price_raw: oraclePrice.toString(),
             oracle_observation_block: priceBlock.toString(),
             oracle_price_timing: "liquidation_block_end_state", usdc_token_address: usdc || null, gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null, gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null, usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted", excludes_gas_and_execution_costs: true, warning: "Gross oracle-valued surplus, not realized net profit. Oracle price is read at liquidation block-end, not at the exact transaction index. USDC value is populated only when the market loan token is the configured USDC token." };
+
+          // Quote only the incentive collateral, not the liquidator's principal.
+          // No quote request occurs for a zero-delay or unknown-timing event.
+          if (chainId === 747474 && usdc) {
+            if (rewardCollateral === 0n) {
+              item.profit.current_reward_usdc_quote = {
+                provider: "SushiSwap", status: "unavailable_zero_reward",
+                token_in: p.collateralToken, token_out: usdc, amount_in_raw: "0", quote_timestamp: null
+              };
+            } else {
+              try {
+                if (usdcDecimals === null) {
+                  usdcDecimals = Number(await client.readContract({
+                    address: usdc as Address, abi: ERC20_ABI, functionName: "decimals"
+                  }));
+                }
+                if (String(p.collateralToken).toLowerCase() === usdc) {
+                  item.profit.current_reward_usdc_quote = {
+                    provider: "SushiSwap", status: "identity_no_swap_required",
+                    quote_type: "current_identity", quote_timestamp: new Date().toISOString(),
+                    token_in: p.collateralToken, token_out: usdc,
+                    amount_in_raw: rewardCollateral.toString(), amount_out_raw: rewardCollateral.toString(),
+                    amount_out_usdc: formatUnits(rewardCollateral, usdcDecimals), usdc_decimals: usdcDecimals
+                  };
+                } else {
+                  const quote = await quoteSushiReward(chainId, p.collateralToken, usdc, rewardCollateral, sushiKey);
+                  item.profit.current_reward_usdc_quote = {
+                    ...quote, amount_out_usdc: formatUnits(BigInt(quote.amount_out_raw), usdcDecimals),
+                    usdc_decimals: usdcDecimals
+                  };
+                }
+              } catch (error) {
+                item.profit.current_reward_usdc_quote = {
+                  provider: "SushiSwap", status: "unavailable", quote_timestamp: null,
+                  token_in: p.collateralToken, token_out: usdc,
+                  amount_in_raw: rewardCollateral.toString(), reason: String(error)
+                };
+              }
+            }
+          }
         } catch (profitError) { item.profit_error = String(profitError); }
       }
     } catch (error) {
@@ -237,21 +330,23 @@ async function main() {
     const resolvedEvents = events.filter(x => ["delayed", "lower_bound_only", "same_block_or_unresolved"].includes(x.timing_status));
     const profitEvents = delayedEvents.filter(x => x.profit_calculated && x.profit);
     const profitRaw = profitEvents.reduce((sum, x) => sum + BigInt(x.profit.gross_profit_loan_token_raw), 0n);
+    const quotedEvents = profitEvents.filter(x => ["quoted", "identity_no_swap_required"].includes(x.profit.current_reward_usdc_quote?.status));
+    const quotedUsdcRaw = quotedEvents.reduce((sum, x) => sum + BigInt(x.profit.current_reward_usdc_quote.amount_out_raw), 0n);
     const decimals = profitEvents[0]?.profit?.loan_token_decimals ?? null;
-    return { market_id: marketId, loan_token: first.market_params.loan_token, collateral_token: first.market_params.collateral_token, lltv_raw: first.market_params.lltv_raw, total_liquidations: events.length, delayed_event_count: delayedEvents.length, resolved_timing_count: resolvedEvents.length, timing_coverage_ratio: events.length ? resolvedEvents.length / events.length : 0, same_block_or_unresolved_count: events.filter(x => x.timing_status === "same_block_or_unresolved").length, lower_bound_only_count: events.filter(x => x.timing_status === "lower_bound_only").length, unknown_count: events.filter(x => x.timing_status === "unknown").length, average_delay_blocks: delays.length ? delays.reduce((x, y) => x + y, 0) / delays.length : null, median_delay_blocks: median(delays), minimum_delay_blocks: delays.length ? Math.min(...delays) : null, maximum_delay_blocks: delays.length ? Math.max(...delays) : null, average_delay_seconds: seconds.length ? seconds.reduce((x, y) => x + y, 0) / seconds.length : null, median_delay_seconds: median(seconds), total_gross_profit_loan_token_raw: profitRaw.toString(), loan_token_decimals: decimals, profit_valued_event_count: profitEvents.length, qualifies_repeated_delay_signal: delayedEvents.length >= minDelayedEvents };
+    return { market_id: marketId, loan_token: first.market_params.loan_token, collateral_token: first.market_params.collateral_token, lltv_raw: first.market_params.lltv_raw, total_liquidations: events.length, delayed_event_count: delayedEvents.length, resolved_timing_count: resolvedEvents.length, timing_coverage_ratio: events.length ? resolvedEvents.length / events.length : 0, same_block_or_unresolved_count: events.filter(x => x.timing_status === "same_block_or_unresolved").length, lower_bound_only_count: events.filter(x => x.timing_status === "lower_bound_only").length, unknown_count: events.filter(x => x.timing_status === "unknown").length, average_delay_blocks: delays.length ? delays.reduce((x, y) => x + y, 0) / delays.length : null, median_delay_blocks: median(delays), minimum_delay_blocks: delays.length ? Math.min(...delays) : null, maximum_delay_blocks: delays.length ? Math.max(...delays) : null, average_delay_seconds: seconds.length ? seconds.reduce((x, y) => x + y, 0) / seconds.length : null, median_delay_seconds: median(seconds), total_gross_profit_loan_token_raw: profitRaw.toString(), loan_token_decimals: decimals, profit_valued_event_count: profitEvents.length, sushi_current_quote_count: quotedEvents.length, sushi_current_reward_usdc_raw: quotedEvents.length ? quotedUsdcRaw.toString() : null, sushi_current_reward_usdc: quotedEvents.length && usdcDecimals !== null ? formatUnits(quotedUsdcRaw, usdcDecimals) : null, sushi_quote_coverage_ratio: delayedEvents.length ? quotedEvents.length / delayedEvents.length : 0, qualifies_repeated_delay_signal: delayedEvents.length >= minDelayedEvents };
   }).sort((x, y) => y.delayed_event_count - x.delayed_event_count || (y.median_delay_blocks ?? -1) - (x.median_delay_blocks ?? -1) || y.timing_coverage_ratio - x.timing_coverage_ratio);
   const qualifyingMarkets = marketSummary.filter(x => x.qualifies_repeated_delay_signal);
   const report = {
-    schema_version: "2.0.0", document_version: "v2", workflow: "market_analyzer",
+    schema_version: "2.1.0", document_version: "v3", workflow: "market_analyzer",
     chain: { chain_id: chainId, morpho_blue_singleton: morpho },
     generated_at: new Date().toISOString(),
-    configuration: { lookback_days: lookbackDays, minimum_delayed_events_per_market: minDelayedEvents, max_readiness_lookback_blocks: maxLookbackBlocks.toString(), initial_rpc_requests_per_second: 10, failure_backoff: "after_more_than_3_consecutive_failures_pause_3_seconds_and_reduce_rate_by_1_per_second_floor_1", usdc_token_address: usdc || null },
+    configuration: { lookback_days: lookbackDays, minimum_delayed_events_per_market: minDelayedEvents, max_readiness_lookback_blocks: maxLookbackBlocks.toString(), initial_rpc_requests_per_second: 10, failure_backoff: "after_more_than_3_consecutive_failures_pause_3_seconds_and_reduce_rate_by_1_per_second_floor_1", usdc_token_address: usdc || null, katana_quote_provider: "SushiSwap /quote/v7/747474", sushi_quote_max_slippage_fraction: "0.005", sushi_max_requests_per_second: 2 },
     coverage: { from_block: range.block.toString(), to_block: latest.toString(), event_count: logs.length, delayed_event_count: delayed.length, same_block_or_unresolved_count: results.filter(x => x.timing_status === "same_block_or_unresolved").length, lower_bound_only_count: results.filter(x => x.timing_status === "lower_bound_only").length, unknown_count: results.filter(x => x.timing_status === "unknown").length },
     events: results,
     market_summary: marketSummary,
     qualifying_markets: qualifyingMarkets,
-    profit_policy: "Profit is calculated only for events with a positive supported block delay, including positive lower bounds. All other liquidation events retain timing records but have no profit calculation.",
-    limitations: ["The readiness search uses exponential bracketing and binary search, assuming eligibility does not reverse within the bracket. Oracle price movements can violate that assumption; results expose the assumption and should not be treated as exact proof where oracle history is volatile.", "The profit figure is gross collateral value at the market oracle minus debt repaid, denominated in the loan token. It is not realized net profit and excludes gas and execution costs.", "USDC conversion is only populated when the loan token itself is the configured USDC token; other loan tokens remain denominated in their loan token."],
+    profit_policy: "Only liquidation events with a positive supported readiness-to-execution delay receive a gross-surplus calculation and optional current SushiSwap USDC reward quote. Same-block and unresolved events are not quoted.",
+    limitations: ["The readiness search uses exponential bracketing and binary search, assuming eligibility does not reverse within the bracket. Oracle price movements can violate that assumption; results expose the assumption and should not be treated as exact proof where oracle history is volatile.", "The profit figure is gross collateral value at the market oracle minus debt repaid, denominated in the loan token. It is not realized net profit and excludes gas and execution costs.", "The market loan-token gross surplus is distinct from the SushiSwap quote of the calculated collateral incentive amount. Sushi current quotes are not historical realized profit or guaranteed fill. A route/API error results in an unavailable quote without affecting timing classification."],
   };
 
   const fs = await import("node:fs/promises"), path = await import("node:path");
@@ -264,13 +359,13 @@ async function main() {
     "- Morpho singleton: " + morpho, "- Liquidation events: " + logs.length,
     "- Delayed events: " + delayed.length, "",
     "## Market summary", "",
-    "| Market ID | Loan token | Collateral token | Liquidations | Delayed | Median delay (blocks) | Gross profit (loan token raw) | Qualifies |",
-    "|---|---|---|---:|---:|---:|---:|---|",
-    ...marketSummary.map(x => "| " + x.market_id + " | " + x.loan_token + " | " + x.collateral_token + " | " + x.total_liquidations + " | " + x.delayed_event_count + " | " + (x.median_delay_blocks ?? "—") + " | " + x.total_gross_profit_loan_token_raw + " | " + x.qualifies_repeated_delay_signal + " |"),
+    "| Market ID | Loan token | Collateral token | Liquidations | Delayed | Median delay (blocks) | Gross profit (loan token raw) | Sushi reward USDC | Quoted / delayed | Qualifies |",
+    "|---|---|---|---:|---:|---:|---:|---:|---:|---|",
+    ...marketSummary.map(x => "| " + x.market_id + " | " + x.loan_token + " | " + x.collateral_token + " | " + x.total_liquidations + " | " + x.delayed_event_count + " | " + (x.median_delay_blocks ?? "—") + " | " + x.total_gross_profit_loan_token_raw + " | " + (x.sushi_current_reward_usdc ?? "unavailable") + " | " + x.sushi_current_quote_count + "/" + x.delayed_event_count + " | " + x.qualifies_repeated_delay_signal + " |"),
     "", "## Delayed liquidation events", "",
-    "| Market ID | Borrower | Tx | Liquidation block | First eligible block | Delay blocks | Delay seconds | Gross profit (loan token raw) |",
-    "|---|---|---|---:|---:|---:|---:|---:|",
-    ...delayed.map(x => "| " + x.market_id + " | " + x.borrower + " | " + x.transaction_hash + " | " + x.liquidation_block + " | " + x.first_eligible_block + " | " + x.delay_blocks + " | " + (x.delay_seconds ?? "unknown") + " | " + (x.profit?.gross_profit_loan_token_raw ?? "unavailable") + " |"),
+    "| Market ID | Borrower | Tx | Liquidation block | First eligible block | Delay blocks | Delay seconds | Gross profit (loan token raw) | Sushi reward USDC | Quote status |",
+    "|---|---|---|---:|---:|---:|---:|---:|---:|---|",
+    ...delayed.map(x => "| " + x.market_id + " | " + x.borrower + " | " + x.transaction_hash + " | " + x.liquidation_block + " | " + x.first_eligible_block + " | " + x.delay_blocks + " | " + (x.delay_seconds ?? "unknown") + " | " + (x.profit?.gross_profit_loan_token_raw ?? "unavailable") + " | " + (x.profit?.current_reward_usdc_quote?.amount_out_usdc ?? "unavailable") + " | " + (x.profit?.current_reward_usdc_quote?.status ?? "not_quoted") + " |"),
     "", "## Coverage", "", JSON.stringify(report.coverage, null, 2), "",
     "## Profit policy", "", report.profit_policy, "", "## Limitations", "", ...report.limitations.map(x => "- " + x), "",
   ].join("\n");
