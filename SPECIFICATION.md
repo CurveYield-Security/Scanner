@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v10  
+**Document version:** v11  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -136,7 +136,7 @@ For each discovered candidate, store where available:
 
 ### 2.7 Market Discovery implementation status
 
-The current implementation is Market Discovery collector v14 and workflow v6.
+The current implementation is Market Discovery collector v15 and workflow v6.
 
 **Collection and persistence**
 - One run is scoped to one required EVM chain ID.
