@@ -1,3 +1,4 @@
+// File version: v1
 import { createPublicClient, defineChain, formatUnits, http, parseAbiItem, type Address, type Hex } from "viem";
 import { getChainAddress } from "@morpho-org/morpho-ts";
 import { createAdaptiveRpcFetch } from "./rpc_rate_limiter.js";
@@ -94,6 +95,8 @@ async function main() {
     nativeCurrency: { name: "Native", symbol: "NATIVE", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
   const client = createPublicClient({ chain, transport: http(rpcUrl, { timeout: 60000, retryCount: 2, fetchFn: createAdaptiveRpcFetch() }) });
   if (await client.getChainId() !== chainId) throw new Error("RPC chain ID does not match workflow input");
+  const morphoCode = await client.getBytecode({ address: morpho });
+  if (!morphoCode || morphoCode === "0x") throw new Error("Morpho Blue singleton has no deployed bytecode on this chain");
 
   const latest = await client.getBlockNumber();
   const range = await findStartBlock(client, latest, lookbackDays);
@@ -165,8 +168,10 @@ async function main() {
     const p: any = await marketParams(id);
     const item: any = {
       chain_id: chainId, morpho_singleton: morpho, market_id: id, borrower, liquidator: caller,
-      transaction_hash: log.transactionHash, log_index: Number(log.logIndex),
+      transaction_hash: log.transactionHash, transaction_index: Number(log.transactionIndex), log_index: Number(log.logIndex),
+      block_hash: log.blockHash, raw_log: { topics: log.topics, data: log.data },
       liquidation_block: Number(log.blockNumber), liquidation_timestamp: Number(eventBlock.timestamp),
+      market_params: { loan_token: p.loanToken, collateral_token: p.collateralToken, oracle: p.oracle, irm: p.irm, lltv_raw: p.lltv.toString() },
       repaid_assets_raw: a.repaidAssets.toString(), repaid_shares_raw: a.repaidShares.toString(),
       seized_assets_raw: a.seizedAssets.toString(), bad_debt_assets_raw: a.badDebtAssets.toString(),
       timing_status: "unknown", first_eligible_block: null, delay_blocks: null, delay_seconds: null,
