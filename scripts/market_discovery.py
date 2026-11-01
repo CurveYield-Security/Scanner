@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chain-scoped Morpho Blue market discovery with durable JSON and Markdown snapshots."""
+"""Market Discovery implementation v2: chain-scoped collection and durable snapshots."""
 from __future__ import annotations
 import datetime as dt
 import json
@@ -167,7 +167,10 @@ def render_markdown(report):
         f"- Market catalogue status: {coverage['market_catalogue_status']}",
         f"- Last market fetch: {coverage.get('market_catalogue_fetched_at') or 'unknown'}",
         f"- Reused prior market catalogue: {coverage['market_catalogue_reused']}",
+        f"- Market refresh error: {coverage.get('market_refresh_error') or 'none'}",
         f"- Candidate pagination complete: {coverage['candidate_pagination_complete']}",
+        f"- Candidate data stale: {coverage.get('candidate_data_stale', False)}",
+        f"- Candidate scan error: {coverage.get('candidate_scan_error') or 'none'}",
         f"- Candidate rows received: {coverage['candidate_raw_rows']}",
         f"- Candidate pages: {coverage['candidate_pages']}",
         "",
@@ -222,15 +225,42 @@ def main():
         except ValueError:
             pass
 
+    market_error = None
     if cache_fresh and previous and isinstance(previous.get("markets"), list):
         markets, reused, markets_at, market_status = previous["markets"], True, previous_at, "reused_cached_catalogue"
     else:
-        markets = fetch_markets(chain_id)
-        reused = False
-        markets_at = now.isoformat().replace("+00:00", "Z")
-        market_status = "refreshed"
+        try:
+            markets = fetch_markets(chain_id)
+            reused = False
+            markets_at = now.isoformat().replace("+00:00", "Z")
+            market_status = "refreshed"
+        except Exception as exc:
+            market_error = str(exc)
+            if previous and isinstance(previous.get("markets"), list):
+                markets, reused, markets_at = previous["markets"], True, previous_at
+                market_status = "stale_cache_after_refresh_failure"
+            else:
+                markets, reused, markets_at = [], False, None
+                market_status = "failed_no_catalogue"
 
-    candidates, meta = fetch_risk_candidates(chain_id)
+    candidate_error = None
+    try:
+        candidates, meta = fetch_risk_candidates(chain_id)
+        candidate_status = "complete_for_configured_health_factor_cutoff_unverified_onchain"
+        candidate_stale = False
+    except Exception as exc:
+        candidate_error = str(exc)
+        candidates = (previous or {}).get("risk_candidates", [])
+        old_cov = (previous or {}).get("coverage", {})
+        meta = {
+            "raw_rows": old_cov.get("candidate_raw_rows", 0),
+            "unique_candidates": len(candidates),
+            "pages": old_cov.get("candidate_pages", 0),
+            "health_factor_cutoff": old_cov.get("candidate_health_factor_cutoff", DEFAULT_HF_CUTOFF),
+            "pagination_complete": False
+        }
+        candidate_status = "failed_using_previous_snapshot" if candidates else "failed_no_candidate_data"
+        candidate_stale = bool(candidates)
     report = {
         "schema_version": SCHEMA_VERSION,
         "document_version": "v1",
@@ -246,11 +276,15 @@ def main():
             "market_catalogue_status": market_status,
             "market_catalogue_fetched_at": markets_at,
             "market_catalogue_reused": reused,
-            "risk_candidate_status": "complete_api_scan_unverified_onchain",
+            "market_refresh_error": market_error,
+            "risk_candidate_status": candidate_status,
+            "candidate_data_stale": candidate_stale,
+            "candidate_scan_error": candidate_error,
             "candidate_pagination_complete": meta["pagination_complete"],
             "candidate_raw_rows": meta["raw_rows"],
             "candidate_pages": meta["pages"],
             "candidate_unique_count": meta["unique_candidates"],
+            "candidate_health_factor_cutoff": meta["health_factor_cutoff"],
             "onchain_verification_status": "not_implemented",
             "forward_projection_status": "unknown_insufficient_data"
         },
