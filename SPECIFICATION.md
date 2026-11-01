@@ -10,7 +10,7 @@
 
 ## 1. Purpose and operating model
 
-The Scanner identifies Morpho Blue markets where liquidation events repeatedly remain executable for one or more blocks before a liquidator acts. It reports those markets as potential harvesting opportunities and estimates the liquidation reward's current USDC value by requesting a DEX-aggregator quote.
+The Scanner independently discovers Morpho Blue market risk and analyzes the chain-wide liquidation event stream. For each liquidation, it determines whether there was a positive readiness-to-execution delay and calculates gross liquidation surplus only for those delayed events.
 
 The system has exactly two independent workflows:
 
@@ -24,13 +24,10 @@ There is no liquidation event indexer, market-catalogue handoff, trading bot, tr
 | Setting | Default | Meaning |
 |---|---:|---|
 | Historical lookback | 90 days | Liquidation-event window |
-| Minimum delayed events | 2 | Minimum qualifying events per market within the lookback |
 | Forward risk horizon | 30 days | Forecast window for positions approaching liquidation |
-| Profit quote output | USDC | Target token for liquidation-reward quotes |
 | Profit denomination | Market loan token | Also report USDC only when the loan token is the configured USDC token |
 | Execution | Disabled | Read-only analysis; no transactions are sent |
 
-The minimum delayed-event threshold is a count, not a percentage: a market qualifies when it has at least two qualifying delayed liquidation events in the configured 90-day window.
 
 ---
 
@@ -151,7 +148,7 @@ The current implementation is Market Discovery collector v19 and workflow v7.
 - Dependencies are pinned in package.json; the first workflow run creates and commits package-lock.json, and subsequent runs install from that lockfile with npm ci.
 
 **On-chain validation and risk calculations**
-- The Morpho Blue singleton address is resolved by chain ID from Morpho's maintained `@morpho-org/morpho-ts` address registry. Its bytecode is checked at the target chain.
+- The Katana singleton is resolved from the official Katana deployment address; other supported chains use Morpho's `@morpho-org/morpho-ts` address registry. Its bytecode is checked at the target chain.
 - Each market ID is checked against `keccak256(abi.encode(MarketParams))`; market parameters are then verified against the singleton's `idToMarketParams`. Verified immutable parameters are retained for later runs.
 - The workflow reads Morpho market state, oracle price, and candidate borrower positions at one recorded latest block. Every on-chain call, including market-parameter checks, market state, oracle, IRM, and positions, is pinned to that same block number. It uses Multicall3 for batched reads where available and falls back to bounded individual read calls if the multicall path is unavailable.
 - Current health is evaluated with Morpho Blue's exact core rounding direction: borrow shares convert to debt assets rounding up; collateral value and LLTV borrowing capacity round down.
@@ -250,12 +247,12 @@ All persisted datasets must include source provenance, observation/indexing time
 ## 6. Execution, scheduling, and resource boundaries
 
 - Implement exactly two GitHub Actions workflows, one for Market Discovery and one for the Market Analyzer.
-- Each workflow must be independently runnable and resumable.
+- Each workflow must be independently runnable. Market Discovery reuses its cached market catalogue; Market Analyzer re-queries its configured trailing event window and retains timestamped snapshots.
 - Workflow 1 must be able to refresh market discovery and forward-risk candidates without requiring a full historical re-index.
 - Workflow 2 must be able to query the trailing 90-day chain-wide singleton event stream directly on each run.
 - Workflow 2 must perform timing analysis and conditional profit calculation in the same run; it must not depend on Workflow 1 or a separate event indexer.
 - Heavy historical reconstruction may use GitHub-hosted runner compute. Durable data must live in persistent storage, not only in ephemeral runner files or workflow artifacts.
-- Use bounded chunks, checkpoints, retries, and rate-limit handling. A workflow run completing is not proof that every chain/range was processed; publish explicit coverage/completion state.
+- Use bounded log chunks, bounded retries, and adaptive RPC rate limiting. A workflow run completing is not proof that every historical position was reconstructed; publish explicit coverage and unresolved counts.
 - Do not place API keys, RPC credentials, private keys, or other secrets in source files, committed configuration, logs, or public artifacts. Use repository/environment secrets for credentials if required.
 - All chain access in this scope is read-only. No wallet signing, transaction submission, liquidation execution, token approvals, or contract deployment.
 
@@ -267,13 +264,10 @@ The following settings should be externally configurable:
 
 - Chain/deployment allowlist or denylist, with automatic discovery as the default behavior
 - Historical lookback days (default 90)
-- Minimum delayed events per market (default 2)
 - Forward-risk horizon days (default 30)
 - Discovery/indexing chunk sizes and request pacing
-- RPC/indexer/GraphQL endpoints and credentials, where required
+- RPC and Morpho API endpoints and credentials, where required
 - USDC token address per supported chain
-- USDC token address per supported chain
-- Quote freshness and route constraints
 - Workflow schedules and manual run parameters
 
 Configuration changes must be recorded with the resulting analysis so reports can be reproduced.
@@ -283,12 +277,12 @@ Configuration changes must be recorded with the resulting analysis so reports ca
 ## 8. Accuracy requirements and explicit limitations
 
 1. **Executable means executable:** eligibility must be evaluated against Morpho's actual contract rules and historical state, not inferred solely from a frontend badge or health-factor estimate.
-2. **No invented timing:** if the first executable block cannot be established, report unknown or a lower bound.
-3. **No false market qualification:** only two or more confirmed delayed events qualify by default.
-4. **No false profit claims:** USDC output is a current aggregator quote for the calculated reward amount, not historical realized profit or guaranteed net profit.
+2. **No invented timing:** if the first eligible block cannot be established, report unknown or a positive lower bound.
+3. **No false delay classification:** same-block or unresolved events are not treated as delayed.
+4. **No false profit claims:** gross oracle-valued surplus in the loan token is not historical realized net profit or a guaranteed execution result.
 5. **Profit calculation is conditional:** only events with a positive readiness-to-execution delay receive a gross-surplus calculation.
 6. **Coverage must be visible:** missing chains, failed ranges, incomplete pagination, and unavailable historical state must be explicit.
-7. **Reorganizations must be handled:** event records and checkpoints must track canonical block hashes.
+7. **Historical provenance must be retained:** event records include block hashes and transaction/log identifiers for later verification.
 8. **Forward estimates are conditional:** the 30-day projection assumes unchanged oracle price unless an explicitly documented alternative scenario is added.
 9. **Frontend/indexer data is a discovery aid:** verify candidate positions and market parameters against on-chain state before classifying them.
 10. **No trading:** this specification covers discovery and analysis only.
@@ -302,8 +296,7 @@ When implemented and run successfully, the system should produce:
 - A cross-chain Morpho Blue market catalogue with verification and coverage metadata.
 - A current and 30-day-forward list of liquidation-risk positions, with assumptions stated.
 - A trailing-90-day chain-wide liquidation event report generated directly from the Morpho singleton.
-- For each event with sufficient historical data, the first executable block and exact block delay to liquidation.
-- A list of markets with at least two confirmed delayed events in the 90-day window.
+- For each event with sufficient historical data, the first observed eligible block or a clearly marked lower-bound/unknown timing result.
 - For every event with a positive readiness-to-execution delay, a gross-surplus calculation in the market loan token, with USDC denomination only when that loan token is the configured USDC token.
 - Clear unresolved/unsupported cases rather than fabricated values.
 
