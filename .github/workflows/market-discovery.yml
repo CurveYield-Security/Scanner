@@ -1,4 +1,5 @@
 name: Market Discovery
+# Workflow version: v2
 
 on:
   workflow_dispatch:
@@ -22,7 +23,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: market-discovery-${{ inputs.chain_id }}
+  group: market-discovery-repository-documents
   cancel-in-progress: false
 
 jobs:
