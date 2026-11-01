@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v17  
+**Document version:** v18  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Independent Morpho Blue market discovery and direct chain-wide liquidation analysis  
@@ -26,7 +26,8 @@ There is no liquidation event indexer, market-catalogue handoff, trading bot, tr
 | Historical lookback | 90 days | Liquidation-event window |
 | Minimum delayed events | 2 | Repeated-delay market signal threshold; does not gate per-event processing |
 | Forward risk horizon | 30 days | Forecast window for positions approaching liquidation |
-| Profit denomination | Market loan token | Also report USDC only when the loan token is the configured USDC token |
+| Profit denomination | Market loan token | Keep on-chain gross surplus distinct from the current SushiSwap USDC quote of the reward collateral |
+| Katana quote source | SushiSwap Quote API v7 | Read-only incentive-token-to-USDC quotes for delayed events only |
 | Execution | Disabled | Read-only analysis; no transactions are sent |
 
 
@@ -211,7 +212,12 @@ Profit calculation is strictly conditional:
 - Derive the collateral reward-token amount from seized collateral less the oracle-valued collateral equivalent of debt repaid. Report that amount in collateral-token units, alongside gross surplus in loan-token units.
 - Use the event's seized collateral amount, repaid debt amount, and market oracle price at the liquidation block boundary to calculate collateral value in the loan token, then subtract debt repaid. Record that the oracle observation is block-end state, not the exact transaction-index state.
 - Report gross surplus in raw and decimal-adjusted loan-token units.
-- If the loan token is the configured chain USDC token, also report gross surplus as USDC. Do not imply that a non-USDC loan-token amount is a USDC quote or invent a swap quote when an aggregator does not support the chain.
+- If the loan token is the configured chain USDC token, also report the oracle-valued gross surplus as USDC. Otherwise do not mislabel the loan-token value as USDC.
+- **Katana (747474):** For the calculated positive-delay incentive collateral quantity only, request a current read-only SushiSwap quote from `GET https://api.sushi.com/quote/v7/747474`, with `tokenIn` = collateral token, `tokenOut` = Katana USDC `0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36`, and `amount` = raw incentive collateral integer.
+- Require Sushi `status: Success`, an unchanged `amountIn`, and a positive integer `assumedAmountOut`. Reject partial/missing/no-route quotes instead of treating them as prices or zero revenue. Record request time, input/output addresses, raw and decimal-adjusted USDC output, price impact when provided, provider version, and quote status.
+- For a positive-delay reward already denominated in USDC, record an identity conversion without an unnecessary Sushi API call. A zero reward yields an explicit unavailable-zero-reward status.
+- Rate-limit Sushi HTTP quote requests to 2 per second with bounded retries and backoff. The API's optional `x-api-key` header is supplied via the GitHub `SUSHI_API_KEY` secret if configured. HTTP authorization errors or unsupported routes must not fail timing analysis.
+- The current Sushi quote is a hypothetical gross reward-token conversion at **analysis time**, not an estimate of historical realized profit, a guaranteed executable fill, or the gross oracle-valued surplus itself.
 - Do not calculate profit on any other liquidation event.
 - Label the result as gross oracle-valued surplus, not realized net profit. Gas, financing, slippage, and execution costs are not included.
 
@@ -228,7 +234,7 @@ All JSON-RPC HTTP requests made by either workflow must pass through the shared 
 
 ### 3.6 Market-level aggregation and analyzer outputs
 
-Write a machine-readable JSON report and a human-readable Markdown report under `data/market-analysis/{chain_id}/`, including immutable per-run snapshots. Retain every liquidation event and its timing classification. Only positive-delay events may contain a `profit` object. Aggregate events by market, reporting total events, delayed events, same-block/unresolved counts, lower-bound-only counts, unknown counts, delay statistics, and gross-profit totals in the market loan token. Mark markets with at least two positive-delay events as repeated-delay signals; this threshold does not prevent processing or retaining any individual event. Rank markets transparently by delayed-event count, median delay, and timing coverage. Display gross-profit totals in their native loan token but do not rank incomparable raw token amounts across different markets. Report the historical block range, assumptions, and coverage.
+Write a machine-readable JSON report and a human-readable Markdown report under `data/market-analysis/{chain_id}/`, including immutable per-run snapshots. Retain every liquidation event and its timing classification. Only positive-delay events may contain a `profit` object or Sushi reward quote. Record valid Sushi quote counts, USDC totals, and quote coverage by market without treating missing quotes as zero. Aggregate events by market, reporting total events, delayed events, same-block/unresolved counts, lower-bound-only counts, unknown counts, delay statistics, and gross-profit totals in the market loan token. Mark markets with at least two positive-delay events as repeated-delay signals; this threshold does not prevent processing or retaining any individual event. Rank markets transparently by delayed-event count, median delay, and timing coverage. Display gross-profit totals in their native loan token but do not rank incomparable raw token amounts across different markets. Report the historical block range, assumptions, and coverage.
 
 ---
 ## 5. Data contracts and workflow dependencies
@@ -281,7 +287,7 @@ Configuration changes must be recorded with the resulting analysis so reports ca
 1. **Executable means executable:** eligibility must be evaluated against Morpho's actual contract rules and historical state, not inferred solely from a frontend badge or health-factor estimate.
 2. **No invented timing:** if the first eligible block cannot be established, report unknown or a positive lower bound.
 3. **No false delay classification:** same-block or unresolved events are not treated as delayed.
-4. **No false profit claims:** gross oracle-valued surplus in the loan token is not historical realized net profit or a guaranteed execution result.
+4. **No false profit claims:** gross oracle-valued surplus in the loan token and current Sushi reward-to-USDC quotes are different metrics; neither is historical realized net profit or a guaranteed execution result.
 5. **Profit calculation is conditional:** only events with a positive readiness-to-execution delay receive a gross-surplus calculation.
 6. **Coverage must be visible:** missing chains, failed ranges, incomplete pagination, and unavailable historical state must be explicit.
 7. **Historical provenance must be retained:** event records include block hashes and transaction/log identifiers for later verification.
@@ -299,7 +305,7 @@ When implemented and run successfully, the system should produce:
 - A current and 30-day-forward list of liquidation-risk positions, with assumptions stated.
 - A trailing-90-day chain-wide liquidation event report generated directly from the Morpho singleton.
 - For each event with sufficient historical data, the first observed eligible block or a clearly marked lower-bound/unknown timing result.
-- For every event with a positive readiness-to-execution delay, a gross-surplus calculation in the market loan token, with USDC denomination only when that loan token is the configured USDC token.
+- For every event with a positive readiness-to-execution delay, a gross-surplus calculation in the market loan token, and on Katana a current SushiSwap read-only USDC quote for its calculated collateral incentive amount (or a documented unavailable status).
 - Clear unresolved/unsupported cases rather than fabricated values.
 
 This is the v1 functional scope for the two-workflow Morpho Liquidation Scanner.
