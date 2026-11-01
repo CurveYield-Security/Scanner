@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v4
+# Workflow version: v5
 
 on:
   workflow_dispatch:
@@ -41,6 +41,8 @@ jobs:
           node-version: "22"
       - name: Install pinned read-only dependencies
         run: npm install --no-audit --no-fund
+      - name: Validate Market Discovery TypeScript syntax
+        run: npx esbuild scripts/market_discovery.ts --bundle --platform=node --format=esm --external:viem --external:@morpho-org/morpho-ts --outfile=/tmp/market_discovery.js
       - name: Collect and verify Morpho Blue market data
         env:
           CHAIN_ID: ${{ inputs.chain_id }}
