@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v14  
+**Document version:** v15  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -136,7 +136,7 @@ For each discovered candidate, store where available:
 
 ### 2.7 Market Discovery implementation status
 
-The current implementation is Market Discovery collector v17 and workflow v6.
+The current implementation is Market Discovery collector v18 and workflow v6.
 
 **Collection and persistence**
 - One run is scoped to one required EVM chain ID.
@@ -144,6 +144,8 @@ The current implementation is Market Discovery collector v17 and workflow v6.
 - Morpho GraphQL `marketPositions` is paginated without a health-factor cutoff to retain the full position inventory exposed by the index for that chain.
 - Each run writes `latest.md`, `latest.json`, and immutable timestamped Markdown/JSON snapshots under `data/market-discovery/{chain_id}/`.
 - JSON contains the full indexed position inventory, all on-chain position assessments, the market catalogue, token metadata, on-chain market risk contexts, risk-candidate shortlist, source provenance, block context, configuration, and coverage status. Markdown includes the complete market catalogue, token metadata, on-chain market risk contexts, detailed risk candidates, and the full indexed position inventory with current and projected assessments.
+- The Markdown report starts with a ranked shortlist of up to 10 markets containing currently liquidatable, forecast-liquidatable, or unknown-risk positions. Each row groups positions by market and reports current/forecast/unknown counts and the earliest projected crossing; individual position details remain below.
+- Every run also writes `liquidation-indexer-input.json` and `liquidation-indexer-input.md`, plus timestamped snapshots. These enumerate every known market ID and its loan token, collateral token, oracle, IRM, LLTV, and verification status, alongside the chain's Morpho Blue singleton address. Morpho Blue markets are not separately deployed contracts: all markets on a chain share the singleton. The JSON is the canonical input for Workflow 2.
 - The market catalogue is reused for 24 hours unless forced to refresh. Token metadata is reused; unavailable metadata is retried on subsequent runs. Immutable market-parameter verification is reused after a successful on-chain check. Position inventory and risk state are refreshed each run.
 - If market or position-index refresh fails, the previous saved dataset is retained and marked stale/incomplete rather than reported as a fresh empty result.
 - A repository-wide concurrency group serializes report commits so simultaneous chain runs cannot race while updating the shared repository.
@@ -179,9 +181,9 @@ Build a complete, resumable dataset of Morpho Blue liquidation events over the t
 
 1. Consume the verified deployment and market catalogue from Workflow 1.
 2. Determine the block range corresponding to the trailing 90 days on each chain.
-3. Query Morpho Blue liquidation logs using the correct deployed contract ABI and chain-specific deployment address.
+3. Query the `Liquidate(bytes32,address,address,uint256,uint256,uint256,uint256,uint256)` event from the chain-specific shared Morpho Blue singleton address in the indexer input. Filter by topic0; topic1 is the indexed market ID, topic2 the caller, and topic3 the borrower. A market is not a separate contract address. The catalogue enriches events and can optionally filter topic1.
 4. Decode and persist every liquidation event, preserving raw event/log data as well as normalized fields.
-5. Backfill historical events in bounded block ranges and continue incrementally from the last confirmed checkpoint.
+5. Backfill historical events in bounded block ranges and continue incrementally from the last confirmed checkpoint. Derive the trailing 90-day start block from chain timestamps, then retrieve emitted logs with `eth_getLogs` or an equivalent archive/indexer log API. Split ranges to respect provider limits, persist progress, and retry incomplete ranges.
 6. Reconcile checkpoints and block hashes to detect chain reorganizations; remove or supersede orphaned log records and reprocess the affected range.
 7. Deduplicate by chain ID, transaction hash, and log index.
 8. Preserve events even when later analysis cannot reconstruct the exact executable block or quote a reward.
