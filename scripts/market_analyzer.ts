@@ -189,7 +189,7 @@ async function main() {
         const firstBlock = await client.getBlock({ blockNumber: BigInt(timing.first_eligible_block) });
         item.delay_seconds = Number(eventBlock.timestamp - firstBlock.timestamp);
         try {
-          const priceBlock = log.blockNumber > 0n ? log.blockNumber - 1n : log.blockNumber;
+          const priceBlock = log.blockNumber;
           const oraclePrice = await client.readContract({ address: p.oracle, abi: ORACLE_ABI, functionName: "price", blockNumber: priceBlock });
           const collateralValueInLoan = down(a.seizedAssets, oraclePrice, PRICE_SCALE);
           const grossProfit = collateralValueInLoan - a.repaidAssets;
@@ -197,7 +197,9 @@ async function main() {
           if (!decimalsCache.has(loanKey)) decimalsCache.set(loanKey, Number(await client.readContract({ address: p.loanToken, abi: ERC20_ABI, functionName: "decimals", blockNumber: priceBlock })));
           const loanDecimals = decimalsCache.get(loanKey)!;
           item.profit_calculated = true;
-          item.profit = { method: "oracle_value_of_collateral_seized_minus_debt_repaid", loan_token: p.loanToken, loan_token_decimals: loanDecimals, gross_profit_loan_token_raw: grossProfit.toString(), gross_profit_loan_token: formatUnits(grossProfit, loanDecimals), oracle_price_raw: oraclePrice.toString(), usdc_token_address: usdc || null, gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null, gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null, usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted", excludes_gas_and_execution_costs: true, warning: "Gross oracle-valued surplus, not realized net profit. USDC value is populated only when the market loan token is the configured USDC token." };
+          item.profit = { method: "oracle_value_of_collateral_seized_minus_debt_repaid", loan_token: p.loanToken, loan_token_decimals: loanDecimals, gross_profit_loan_token_raw: grossProfit.toString(), gross_profit_loan_token: formatUnits(grossProfit, loanDecimals), oracle_price_raw: oraclePrice.toString(),
+            oracle_observation_block: priceBlock.toString(),
+            oracle_price_timing: "liquidation_block_end_state", usdc_token_address: usdc || null, gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null, gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null, usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted", excludes_gas_and_execution_costs: true, warning: "Gross oracle-valued surplus, not realized net profit. Oracle price is read at liquidation block-end, not at the exact transaction index. USDC value is populated only when the market loan token is the configured USDC token." };
         } catch (profitError) { item.profit_error = String(profitError); }
       }
     } catch (error) {
