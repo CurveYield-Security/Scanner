@@ -1,0 +1,132 @@
+{
+  "version": "v1",
+  "generated_at": "2026-11-01",
+  "scope": {
+    "include": "Publicly callable contract functions that pay the caller for useful protocol maintenance, harvesting, compounding, distribution, rebalancing, or analogous work.",
+    "exclude": [
+      "borrower liquidation events",
+      "DEX arbitrage/trading"
+    ],
+    "chains_scanned": [
+      "ethereum",
+      "base",
+      "arbitrum"
+    ],
+    "next_chain_researched": "optimism"
+  },
+  "verified": [
+    {
+      "protocol": "Beefy Finance",
+      "chain": "ethereum",
+      "functions": [
+        "callReward()",
+        "harvest()"
+      ],
+      "target": "0xDEF1be4D80a990847f8C7A1e15e824fF2749C0DE",
+      "verification": "Blockchain Operations Hub live callReward() returned non-zero"
+    },
+    {
+      "protocol": "Convex Finance",
+      "chain": "ethereum",
+      "functions": [
+        "earmarkRewards(pid)"
+      ],
+      "target": "0xF403C135812408BFbE8713b5A23a04b3D48AAE31",
+      "verification": "Blockchain Operations Hub live earmarkIncentive() returned 50"
+    },
+    {
+      "protocol": "Aura Finance",
+      "chain": "ethereum",
+      "functions": [
+        "earmarkRewards(pid)"
+      ],
+      "target": "0xA57b8d98dAE62B26Ec3bcC4a365338157060B234",
+      "verification": "Blockchain Operations Hub live earmarkIncentive() returned 50"
+    },
+    {
+      "protocol": "SMRT Protocol",
+      "chain": "ethereum",
+      "functions": [
+        "harvest()"
+      ],
+      "target": "0xDbA0a3E042b1365a76ee1e8Cbd95eaEB2B561AFC",
+      "verification": "Blockchain Operations Hub harvest() eth_call completed; public docs specify 1% keeper fee"
+    }
+  ],
+  "candidates": [
+    {
+      "protocol": "Stake DAO",
+      "chain": "ethereum",
+      "status": "high-confidence-unverified-target",
+      "evidence": "Public research reports caller incentive on harvest flow"
+    },
+    {
+      "protocol": "Llama Airforce",
+      "chain": "ethereum",
+      "status": "high-confidence-unverified-target",
+      "evidence": "Public research reports 1% caller incentive on yield harvesting"
+    }
+  ],
+  "excluded": [
+    {
+      "protocol": "Yearn",
+      "reason": "No sufficiently strong current public caller-bounty evidence"
+    },
+    {
+      "protocol": "Harvest Finance",
+      "reason": "No verified public caller bounty"
+    },
+    {
+      "protocol": "Concentrator / AladdinDAO",
+      "reason": "Relevant harvest surface restricted to harvester role"
+    },
+    {
+      "protocol": "RAAC",
+      "reason": "HARVEST_ROLE required"
+    },
+    {
+      "protocol": "Sperax legacy CompoundStrategy",
+      "chain": "arbitrum",
+      "reason": "harvestIncentiveRate() currently reads 0"
+    },
+    {
+      "protocol": "Quiver Protocol",
+      "chain": "robinhood",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "Kerf",
+      "chain": "robinhood",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "Caliper",
+      "chain": "robinhood",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "Levee",
+      "chain": "robinhood",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "Arrowfarm",
+      "chain": "robinhood",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "EticaHub",
+      "chain": "etica",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "ZeroTrace",
+      "reason": "Unsupported Hub chain"
+    },
+    {
+      "protocol": "STRC",
+      "chain": "ethereum",
+      "reason": "Caller bounty documented but live mainnet target addresses not sufficiently published for Hub verification"
+    }
+  ]
+}
