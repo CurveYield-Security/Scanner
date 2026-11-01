@@ -4,7 +4,7 @@
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Independent Morpho Blue market discovery and direct chain-wide liquidation analysis  
-**Architecture constraint:** Exactly three workflows. This document specifies their responsibilities and interfaces; it does not authorize trading or on-chain transactions.
+**Architecture constraint:** Exactly two independent workflows. This document specifies their responsibilities and interfaces; it does not authorize trading or on-chain transactions.
 
 ---
 
@@ -27,7 +27,7 @@ There is no liquidation event indexer, market-catalogue handoff, trading bot, tr
 | Minimum delayed events | 2 | Minimum qualifying events per market within the lookback |
 | Forward risk horizon | 30 days | Forecast window for positions approaching liquidation |
 | Profit quote output | USDC | Target token for liquidation-reward quotes |
-| Profit quote source | KyberSwap Aggregator API | Initial quote provider; provider adapter should permit a replacement if coverage or access changes |
+| Profit denomination | Market loan token | Also report USDC only when the loan token is the configured USDC token |
 | Execution | Disabled | Read-only analysis; no transactions are sent |
 
 The minimum delayed-event threshold is a count, not a percentage: a market qualifies when it has at least two qualifying delayed liquidation events in the configured 90-day window.
