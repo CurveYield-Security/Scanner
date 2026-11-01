@@ -1,5 +1,5 @@
 name: Morpho Market Analyzer
-# Workflow version: v2
+# Workflow version: v3
 
 on:
   workflow_dispatch:
@@ -70,6 +70,7 @@ jobs:
           MAX_READINESS_LOOKBACK_BLOCKS: ${{ inputs.max_readiness_lookback_blocks }}
           RPC_URL: ${{ inputs.chain_id == '747474' && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
           USDC_TOKEN_ADDRESS: ${{ inputs.chain_id == '747474' && '0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36' || inputs.chain_id == '1' && '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' || '' }}
+          SUSHI_API_KEY: ${{ secrets.SUSHI_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: npx tsx scripts/market_analyzer.ts
       - name: Retain analyzer reports
