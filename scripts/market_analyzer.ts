@@ -98,7 +98,7 @@ async function main() {
   const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
   const usdc = (process.env.USDC_TOKEN_ADDRESS ?? "").toLowerCase();
   const maxLookbackBlocks = BigInt(process.env.MAX_READINESS_LOOKBACK_BLOCKS ?? "50000");
-  if (!Number.isSafeInteger(chainId) || chainId <= 0 || !Number.isSafeInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365) throw new Error("Invalid chain or lookback");
+  if (!Number.isSafeInteger(chainId) || chainId <= 0 || !Number.isSafeInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365 || !Number.isSafeInteger(minDelayedEvents) || minDelayedEvents < 1 || minDelayedEvents > 100) throw new Error("Invalid chain, lookback, or delayed-event threshold");
   if (!rpcUrl) throw new Error("Missing configured RPC secret (RPC_KATANA or RPC_ETHEREUM)");
   const morpho = (chainId === 747474 ? "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc" : getChainAddress(chainId, "blue")) as Address;
   const chain = defineChain({ id: chainId, name: chainId === 747474 ? "Katana" : "Chain " + chainId,
