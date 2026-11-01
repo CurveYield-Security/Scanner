@@ -1,5 +1,5 @@
 name: Morpho Market Analyzer
-# Workflow version: v1
+# Workflow version: v2
 
 on:
   workflow_dispatch:
@@ -13,6 +13,11 @@ on:
         description: "Liquidation history window"
         required: true
         default: "90"
+        type: string
+      min_delayed_events_per_market:
+        description: "Minimum delayed events for a repeated-delay market signal"
+        required: true
+        default: "2"
         type: string
       max_readiness_lookback_blocks:
         description: "Maximum backward search per event"
@@ -61,6 +66,7 @@ jobs:
         env:
           CHAIN_ID: ${{ inputs.chain_id }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          MIN_DELAYED_EVENTS_PER_MARKET: ${{ inputs.min_delayed_events_per_market }}
           MAX_READINESS_LOOKBACK_BLOCKS: ${{ inputs.max_readiness_lookback_blocks }}
           RPC_URL: ${{ inputs.chain_id == '747474' && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
           USDC_TOKEN_ADDRESS: ${{ inputs.chain_id == '747474' && '0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36' || inputs.chain_id == '1' && '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' || '' }}
