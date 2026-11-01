@@ -1,7 +1,7 @@
 {
   "name": "curveyield-morpho-scanner",
   "private": true,
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Read-only Morpho Blue market discovery and direct liquidation analysis workflows",
   "type": "module",
   "scripts": {
