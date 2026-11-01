@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v3  
+**Document version:** v4  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -134,10 +134,38 @@ For each discovered candidate, store where available:
 - If a refresh fails, retain the last successful dataset where available, mark it stale, and record the failure. Never present stale data as a fresh successful scan.
 - Do not discard older snapshots when writing a new latest report.
 
-### 2.7 Initial implementation status
+### 2.7 Market Discovery implementation status
 
-The first implementation provides chain-scoped market enumeration, a Morpho GraphQL near-risk candidate feed, JSON/Markdown output, retained snapshots, and reuse of the saved market catalogue. Its current candidate query is bounded to health factor <= 1.25. It does not yet perform on-chain borrower/market verification or the exact 30-day interest-accrual projection required by Section 2.2; those results must remain explicitly unknown until that calculation path is implemented. This status note does not waive the functional requirements above.
+The current implementation is Market Discovery collector v6 and workflow v4.
 
+**Collection and persistence**
+- One run is scoped to one required EVM chain ID.
+- Morpho REST `GET /v1/blue/markets` is cursor-paginated to enumerate the selected chain's indexed Blue market catalogue.
+- Morpho GraphQL `marketPositions` is paginated without a health-factor cutoff to retain the full position inventory exposed by the index for that chain.
+- Each run writes `latest.md`, `latest.json`, and immutable timestamped Markdown/JSON snapshots under `data/market-discovery/{chain_id}/`.
+- JSON contains the full indexed position inventory, market catalogue, token metadata, risk-evaluation results, source provenance, block context, configuration, and coverage status. Markdown includes the market catalogue, evaluated risk candidates, and the complete indexed position inventory.
+- The market catalogue is reused for 24 hours unless forced to refresh. Token metadata is reused; unavailable metadata is retried on subsequent runs. Immutable market-parameter verification is reused after a successful on-chain check. Position inventory and risk state are refreshed each run.
+- If market or position-index refresh fails, the previous saved dataset is retained and marked stale/incomplete rather than reported as a fresh empty result.
+- A repository-wide concurrency group serializes report commits so simultaneous chain runs cannot race while updating the shared repository.
+
+**On-chain validation and risk calculations**
+- The Morpho Blue singleton address is resolved by chain ID from Morpho's maintained `@morpho-org/morpho-ts` address registry. Its bytecode is checked at the target chain.
+- Each market ID is checked against `keccak256(abi.encode(MarketParams))`; market parameters are then verified against the singleton's `idToMarketParams`. Verified immutable parameters are retained for later runs.
+- The workflow reads Morpho market state, oracle price, and candidate borrower positions at a recorded latest block.
+- Current health is evaluated with Morpho Blue's exact core rounding direction: borrow shares convert to debt assets rounding up; collateral value and LLTV borrowing capacity round down.
+- Existing unaccrued interest is simulated with Morpho's `wTaylorCompounded` formula and the market IRM's `borrowRateView`.
+- Forward eligibility uses a conditional scenario with the current oracle price and current borrow rate held constant over the configured horizon. The earliest threshold-crossing second is found by integer binary search. This is a scenario projection, not a collateral-price forecast or a guarantee of future eligibility.
+- To limit expensive individual position RPC reads, the indexed health factor is used as a conservative prefilter: candidates at or below the modelled debt-growth factor plus a 5% margin are individually verified on-chain. The complete indexed position inventory remains in both reports; positions outside the prefilter are not individually on-chain evaluated in that run.
+
+**Coverage qualifications**
+- Morpho GraphQL does not expose its indexer lag in the position response. The full set of rows returned by the index is retained, but the result cannot claim the index is synchronized with the latest block.
+- GraphQL uses offset pagination. Concurrent index updates can shift rows between pages; duplicates are deduplicated and unique row totals are compared with the API-reported total. Any discrepancy must remain visible as a coverage limitation.
+- Candidate prefiltering means the on-chain evaluation set is not the entire borrower universe. The report distinguishes indexed inventory from positions individually verified and classified.
+- If the selected chain has no Morpho SDK deployment address, no valid RPC, no Morpho bytecode, or missing market/oracle/IRM state, the affected records are reported as unavailable or the run fails before publishing misleading results.
+- An optional GitHub Actions secret named `MORPHO_RPC_URL` can supply a read-only RPC endpoint. Otherwise the workflow discovers a public endpoint and verifies its `eth_chainId` before reading.
+- No wallet, signing key, transaction submission, contract deployment, or on-chain write path is present.
+
+This implementation materially advances the functional requirements but does not claim perfect global position completeness: source index freshness and the indexed-health-factor prefilter remain explicit limits.
 ---
 
 ## 3. Workflow 2 — Liquidation Event Indexer
