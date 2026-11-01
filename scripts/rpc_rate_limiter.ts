@@ -1,3 +1,4 @@
+// File version: v1
 // Shared adaptive RPC pacing for scanner workflows.
 // Four consecutive failed RPC requests trigger a 3-second pause and reduce
 // the sustained request rate by one per second, down to one request/second.
