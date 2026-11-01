@@ -1,4 +1,4 @@
-// File version: v1
+// File version: v2
 import { createPublicClient, defineChain, formatUnits, http, parseAbiItem, type Address, type Hex } from "viem";
 import { getChainAddress } from "@morpho-org/morpho-ts";
 import { createAdaptiveRpcFetch } from "./rpc_rate_limiter.js";
@@ -94,6 +94,7 @@ async function collectLogs(client: any, morpho: Address, from: bigint, to: bigin
 async function main() {
   const chainId = Number(process.env.CHAIN_ID ?? "747474");
   const lookbackDays = Number(process.env.LOOKBACK_DAYS ?? "90");
+  const minDelayedEvents = Number(process.env.MIN_DELAYED_EVENTS_PER_MARKET ?? "2");
   const rpcUrl = process.env.RPC_URL;
   const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
   const usdc = (process.env.USDC_TOKEN_ADDRESS ?? "").toLowerCase();
@@ -114,6 +115,7 @@ async function main() {
   const paramsCache = new Map<string, any>();
   const eligibilityCache = new Map<string, boolean>();
   const decimalsCache = new Map<string, number>();
+  const collateralDecimalsCache = new Map<string, number>();
   const results: any[] = [];
 
   async function marketParams(id: Hex) {
@@ -206,8 +208,13 @@ async function main() {
           const loanKey = String(p.loanToken).toLowerCase();
           if (!decimalsCache.has(loanKey)) decimalsCache.set(loanKey, Number(await client.readContract({ address: p.loanToken, abi: ERC20_ABI, functionName: "decimals", blockNumber: priceBlock })));
           const loanDecimals = decimalsCache.get(loanKey)!;
+          const collateralKey = String(p.collateralToken).toLowerCase();
+          if (!collateralDecimalsCache.has(collateralKey)) collateralDecimalsCache.set(collateralKey, Number(await client.readContract({ address: p.collateralToken, abi: ERC20_ABI, functionName: "decimals", blockNumber: priceBlock })));
+          const collateralDecimals = collateralDecimalsCache.get(collateralKey)!;
+          const debtEquivalentCollateral = up(a.repaidAssets, PRICE_SCALE, oraclePrice);
+          const rewardCollateral = a.seizedAssets > debtEquivalentCollateral ? a.seizedAssets - debtEquivalentCollateral : 0n;
           item.profit_calculated = true;
-          item.profit = { method: "oracle_value_of_collateral_seized_minus_debt_repaid", loan_token: p.loanToken, loan_token_decimals: loanDecimals, gross_profit_loan_token_raw: grossProfit.toString(), gross_profit_loan_token: formatUnits(grossProfit, loanDecimals), oracle_price_raw: oraclePrice.toString(),
+          item.profit = { method: "oracle_value_of_collateral_seized_minus_debt_repaid", loan_token: p.loanToken, loan_token_decimals: loanDecimals, reward_token: p.collateralToken, reward_token_decimals: collateralDecimals, liquidation_reward_collateral_raw: rewardCollateral.toString(), liquidation_reward_collateral: formatUnits(rewardCollateral, collateralDecimals), gross_profit_loan_token_raw: grossProfit.toString(), gross_profit_loan_token: formatUnits(grossProfit, loanDecimals), oracle_price_raw: oraclePrice.toString(),
             oracle_observation_block: priceBlock.toString(),
             oracle_price_timing: "liquidation_block_end_state", usdc_token_address: usdc || null, gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null, gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null, usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted", excludes_gas_and_execution_costs: true, warning: "Gross oracle-valued surplus, not realized net profit. Oracle price is read at liquidation block-end, not at the exact transaction index. USDC value is populated only when the market loan token is the configured USDC token." };
         } catch (profitError) { item.profit_error = String(profitError); }
@@ -221,13 +228,27 @@ async function main() {
   }
 
   const delayed = results.filter(x => ["delayed", "lower_bound_only"].includes(x.timing_status) && x.delay_blocks > 0);
+  const median = (values: number[]) => { const sorted = [...values].sort((x, y) => x - y); if (!sorted.length) return null; const mid = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2; };
+  const marketGroups = new Map<string, any[]>();
+  for (const event of results) { const group = marketGroups.get(event.market_id) ?? []; group.push(event); marketGroups.set(event.market_id, group); }
+  const marketSummary = [...marketGroups.entries()].map(([marketId, events]) => {
+    const first = events[0], delayedEvents = events.filter(x => ["delayed", "lower_bound_only"].includes(x.timing_status) && x.delay_blocks > 0);
+    const delays = delayedEvents.map(x => Number(x.delay_blocks)), seconds = delayedEvents.map(x => Number(x.delay_seconds)).filter(Number.isFinite);
+    const profitEvents = delayedEvents.filter(x => x.profit_calculated && x.profit);
+    const profitRaw = profitEvents.reduce((sum, x) => sum + BigInt(x.profit.gross_profit_loan_token_raw), 0n);
+    const decimals = profitEvents[0]?.profit?.loan_token_decimals ?? null;
+    return { market_id: marketId, loan_token: first.market_params.loan_token, collateral_token: first.market_params.collateral_token, lltv_raw: first.market_params.lltv_raw, total_liquidations: events.length, delayed_event_count: delayedEvents.length, same_block_or_unresolved_count: events.filter(x => x.timing_status === "same_block_or_unresolved").length, lower_bound_only_count: events.filter(x => x.timing_status === "lower_bound_only").length, unknown_count: events.filter(x => x.timing_status === "unknown").length, average_delay_blocks: delays.length ? delays.reduce((x, y) => x + y, 0) / delays.length : null, median_delay_blocks: median(delays), minimum_delay_blocks: delays.length ? Math.min(...delays) : null, maximum_delay_blocks: delays.length ? Math.max(...delays) : null, average_delay_seconds: seconds.length ? seconds.reduce((x, y) => x + y, 0) / seconds.length : null, median_delay_seconds: median(seconds), total_gross_profit_loan_token_raw: profitRaw.toString(), loan_token_decimals: decimals, profit_valued_event_count: profitEvents.length, qualifies_repeated_delay_signal: delayedEvents.length >= minDelayedEvents };
+  }).sort((x, y) => y.delayed_event_count - x.delayed_event_count || (y.median_delay_blocks ?? -1) - (x.median_delay_blocks ?? -1) || (BigInt(x.total_gross_profit_loan_token_raw) < BigInt(y.total_gross_profit_loan_token_raw) ? 1 : BigInt(x.total_gross_profit_loan_token_raw) > BigInt(y.total_gross_profit_loan_token_raw) ? -1 : 0));
+  const qualifyingMarkets = marketSummary.filter(x => x.qualifies_repeated_delay_signal);
   const report = {
-    schema_version: "1.0.0", document_version: "v1", workflow: "market_analyzer",
+    schema_version: "2.0.0", document_version: "v2", workflow: "market_analyzer",
     chain: { chain_id: chainId, morpho_blue_singleton: morpho },
     generated_at: new Date().toISOString(),
-    configuration: { lookback_days: lookbackDays, max_readiness_lookback_blocks: maxLookbackBlocks.toString(), initial_rpc_requests_per_second: 10, failure_backoff: "after_more_than_3_consecutive_failures_pause_3_seconds_and_reduce_rate_by_1_per_second_floor_1", usdc_token_address: usdc || null },
+    configuration: { lookback_days: lookbackDays, minimum_delayed_events_per_market: minDelayedEvents, max_readiness_lookback_blocks: maxLookbackBlocks.toString(), initial_rpc_requests_per_second: 10, failure_backoff: "after_more_than_3_consecutive_failures_pause_3_seconds_and_reduce_rate_by_1_per_second_floor_1", usdc_token_address: usdc || null },
     coverage: { from_block: range.block.toString(), to_block: latest.toString(), event_count: logs.length, delayed_event_count: delayed.length, same_block_or_unresolved_count: results.filter(x => x.timing_status === "same_block_or_unresolved").length, lower_bound_only_count: results.filter(x => x.timing_status === "lower_bound_only").length, unknown_count: results.filter(x => x.timing_status === "unknown").length },
     events: results,
+    market_summary: marketSummary,
+    qualifying_markets: qualifyingMarkets,
     profit_policy: "Profit is calculated only for events with a positive supported block delay, including positive lower bounds. All other liquidation events retain timing records but have no profit calculation.",
     limitations: ["The readiness search uses exponential bracketing and binary search, assuming eligibility does not reverse within the bracket. Oracle price movements can violate that assumption; results expose the assumption and should not be treated as exact proof where oracle history is volatile.", "The profit figure is gross collateral value at the market oracle minus debt repaid, denominated in the loan token. It is not realized net profit and excludes gas and execution costs.", "USDC conversion is only populated when the loan token itself is the configured USDC token; other loan tokens remain denominated in their loan token."],
   };
@@ -241,7 +262,11 @@ async function main() {
     "- Generated: " + report.generated_at, "- Lookback: " + lookbackDays + " days",
     "- Morpho singleton: " + morpho, "- Liquidation events: " + logs.length,
     "- Delayed events: " + delayed.length, "",
-    "## Delayed liquidation events", "",
+    "## Market summary", "",
+    "| Market ID | Loan token | Collateral token | Liquidations | Delayed | Median delay (blocks) | Gross profit (loan token raw) | Qualifies |",
+    "|---|---|---|---:|---:|---:|---:|---|",
+    ...marketSummary.map(x => "| " + x.market_id + " | " + x.loan_token + " | " + x.collateral_token + " | " + x.total_liquidations + " | " + x.delayed_event_count + " | " + (x.median_delay_blocks ?? "—") + " | " + x.total_gross_profit_loan_token_raw + " | " + x.qualifies_repeated_delay_signal + " |"),
+    "", "## Delayed liquidation events", "",
     "| Market ID | Borrower | Tx | Liquidation block | First eligible block | Delay blocks | Delay seconds | Gross profit (loan token raw) |",
     "|---|---|---|---:|---:|---:|---:|---:|",
     ...delayed.map(x => "| " + x.market_id + " | " + x.borrower + " | " + x.transaction_hash + " | " + x.liquidation_block + " | " + x.first_eligible_block + " | " + x.delay_blocks + " | " + (x.delay_seconds ?? "unknown") + " | " + (x.profit?.gross_profit_loan_token_raw ?? "unavailable") + " |"),
