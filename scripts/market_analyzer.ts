@@ -60,15 +60,25 @@ async function findStartBlock(client: any, latest: bigint, lookbackDays: number)
 
 async function collectLogs(client: any, morpho: Address, from: bigint, to: bigint) {
   const all: any[] = [];
-  let cursor = from, span = 5000n;
+  let cursor = from, span = 5000n, rangeFailures = 0;
   while (cursor <= to) {
     const end = cursor + span - 1n > to ? to : cursor + span - 1n;
     try {
       const logs = await client.getLogs({ address: morpho, event: LIQUIDATE, fromBlock: cursor, toBlock: end });
       all.push(...logs);
+      rangeFailures = 0;
       cursor = end + 1n;
       if (span < 5000n) span = span * 2n > 5000n ? 5000n : span * 2n;
     } catch (error) {
+      const message = String(error).toLowerCase();
+      if (/429|rate.?limit|too many requests|throughput|compute units|\\-32005/.test(message)) {
+        rangeFailures++;
+        if (rangeFailures >= 5) throw new Error("RPC rate limit persisted after five bounded retries at block " + cursor + ": " + String(error));
+        console.warn("RPC rate limit at block " + cursor + "; retaining range and backing off (attempt " + rangeFailures + "/5)");
+        await sleep(Math.min(3000 * rangeFailures, 15000));
+        continue;
+      }
+      rangeFailures = 0;
       if (span <= 1n) throw new Error("eth_getLogs failed at block " + cursor + ": " + String(error));
       span = span / 2n;
       console.warn("Log range rejected; reducing block span to " + span);
