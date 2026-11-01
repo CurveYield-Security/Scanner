@@ -188,28 +188,17 @@ async function main() {
       if (["delayed", "lower_bound_only"].includes(timing.status) && timing.first_eligible_block !== null && timing.delay_blocks > 0) {
         const firstBlock = await client.getBlock({ blockNumber: BigInt(timing.first_eligible_block) });
         item.delay_seconds = Number(eventBlock.timestamp - firstBlock.timestamp);
-        const priceBlock = log.blockNumber > 0n ? log.blockNumber - 1n : log.blockNumber;
-        const oraclePrice = await client.readContract({ address: p.oracle, abi: ORACLE_ABI, functionName: "price", blockNumber: priceBlock });
-        const collateralValueInLoan = down(a.seizedAssets, oraclePrice, PRICE_SCALE);
-        const grossProfit = collateralValueInLoan - a.repaidAssets;
-        const loanKey = String(p.loanToken).toLowerCase();
-        if (!decimalsCache.has(loanKey)) decimalsCache.set(loanKey, Number(await client.readContract({ address: p.loanToken, abi: ERC20_ABI, functionName: "decimals", blockNumber: priceBlock })));
-        const loanDecimals = decimalsCache.get(loanKey)!;
-        item.profit_calculated = true;
-        item.profit = {
-          method: "oracle_value_of_collateral_seized_minus_debt_repaid",
-          loan_token: p.loanToken,
-          loan_token_decimals: loanDecimals,
-          gross_profit_loan_token_raw: grossProfit.toString(),
-          gross_profit_loan_token: formatUnits(grossProfit, loanDecimals),
-          oracle_price_raw: oraclePrice.toString(),
-          usdc_token_address: usdc || null,
-          gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null,
-          gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null,
-          usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted",
-          excludes_gas_and_execution_costs: true,
-          warning: "Gross oracle-valued surplus, not realized net profit. USDC value is populated only when the market loan token is the configured USDC token.",
-        };
+        try {
+          const priceBlock = log.blockNumber > 0n ? log.blockNumber - 1n : log.blockNumber;
+          const oraclePrice = await client.readContract({ address: p.oracle, abi: ORACLE_ABI, functionName: "price", blockNumber: priceBlock });
+          const collateralValueInLoan = down(a.seizedAssets, oraclePrice, PRICE_SCALE);
+          const grossProfit = collateralValueInLoan - a.repaidAssets;
+          const loanKey = String(p.loanToken).toLowerCase();
+          if (!decimalsCache.has(loanKey)) decimalsCache.set(loanKey, Number(await client.readContract({ address: p.loanToken, abi: ERC20_ABI, functionName: "decimals", blockNumber: priceBlock })));
+          const loanDecimals = decimalsCache.get(loanKey)!;
+          item.profit_calculated = true;
+          item.profit = { method: "oracle_value_of_collateral_seized_minus_debt_repaid", loan_token: p.loanToken, loan_token_decimals: loanDecimals, gross_profit_loan_token_raw: grossProfit.toString(), gross_profit_loan_token: formatUnits(grossProfit, loanDecimals), oracle_price_raw: oraclePrice.toString(), usdc_token_address: usdc || null, gross_profit_usdc_raw: usdc && p.loanToken.toLowerCase() === usdc ? grossProfit.toString() : null, gross_profit_usdc: usdc && p.loanToken.toLowerCase() === usdc ? formatUnits(grossProfit, loanDecimals) : null, usdc_conversion_status: usdc && p.loanToken.toLowerCase() === usdc ? "loan_token_is_configured_usdc" : "not_converted", excludes_gas_and_execution_costs: true, warning: "Gross oracle-valued surplus, not realized net profit. USDC value is populated only when the market loan token is the configured USDC token." };
+        } catch (profitError) { item.profit_error = String(profitError); }
       }
     } catch (error) {
       item.analysis_error = String(error);
@@ -219,7 +208,7 @@ async function main() {
     if ((i + 1) % 25 === 0) console.log("Processed " + (i + 1) + "/" + logs.length + " liquidation events");
   }
 
-  const delayed = results.filter(x => x.timing_status === "delayed" && x.delay_blocks > 0);
+  const delayed = results.filter(x => ["delayed", "lower_bound_only"].includes(x.timing_status) && x.delay_blocks > 0);
   const report = {
     schema_version: "1.0.0", document_version: "v1", workflow: "market_analyzer",
     chain: { chain_id: chainId, morpho_blue_singleton: morpho },
