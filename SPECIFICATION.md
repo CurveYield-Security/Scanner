@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v16  
+**Document version:** v17  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Independent Morpho Blue market discovery and direct chain-wide liquidation analysis  
@@ -24,6 +24,7 @@ There is no liquidation event indexer, market-catalogue handoff, trading bot, tr
 | Setting | Default | Meaning |
 |---|---:|---|
 | Historical lookback | 90 days | Liquidation-event window |
+| Minimum delayed events | 2 | Repeated-delay market signal threshold; does not gate per-event processing |
 | Forward risk horizon | 30 days | Forecast window for positions approaching liquidation |
 | Profit denomination | Market loan token | Also report USDC only when the loan token is the configured USDC token |
 | Execution | Disabled | Read-only analysis; no transactions are sent |
@@ -207,9 +208,10 @@ Profit calculation is strictly conditional:
 
 - Do not calculate profit for same-block, zero-delay, or unknown-timing events.
 - Calculate gross liquidation surplus only when a positive delay is established, including positive lower-bound-only delays.
+- Derive the collateral reward-token amount from seized collateral less the oracle-valued collateral equivalent of debt repaid. Report that amount in collateral-token units, alongside gross surplus in loan-token units.
 - Use the event's seized collateral amount, repaid debt amount, and market oracle price at the liquidation block boundary to calculate collateral value in the loan token, then subtract debt repaid. Record that the oracle observation is block-end state, not the exact transaction-index state.
 - Report gross surplus in raw and decimal-adjusted loan-token units.
-- If the loan token is the configured chain USDC token, also report the same value as USDC. Do not imply that a non-USDC loan-token amount is a USDC quote.
+- If the loan token is the configured chain USDC token, also report gross surplus as USDC. Do not imply that a non-USDC loan-token amount is a USDC quote or invent a swap quote when an aggregator does not support the chain.
 - Do not calculate profit on any other liquidation event.
 - Label the result as gross oracle-valued surplus, not realized net profit. Gas, financing, slippage, and execution costs are not included.
 
@@ -224,9 +226,9 @@ All JSON-RPC HTTP requests made by either workflow must pass through the shared 
 - Serialize request starts through one limiter so concurrent application tasks cannot bypass the aggregate rate.
 - Apply the limiter to retries as well as initial requests. Never log RPC URLs or credentials.
 
-### 3.6 Analyzer outputs
+### 3.6 Market-level aggregation and analyzer outputs
 
-Write a machine-readable JSON report and a human-readable Markdown report under `data/market-analysis/{chain_id}/`, including immutable per-run snapshots. Retain every liquidation event and its timing classification. Only positive-delay events may contain a `profit` object. Report total event counts, delayed counts, same-block/unresolved counts, lower-bound-only counts, unknown counts, the historical block range, assumptions, and coverage.
+Write a machine-readable JSON report and a human-readable Markdown report under `data/market-analysis/{chain_id}/`, including immutable per-run snapshots. Retain every liquidation event and its timing classification. Only positive-delay events may contain a `profit` object. Aggregate events by market, reporting total events, delayed events, same-block/unresolved counts, lower-bound-only counts, unknown counts, delay statistics, and gross-profit totals in the market loan token. Mark markets with at least two positive-delay events as repeated-delay signals; this threshold does not prevent processing or retaining any individual event. Rank markets transparently by delayed-event count, median delay, and gross-profit total. Report the historical block range, assumptions, and coverage.
 
 ---
 ## 5. Data contracts and workflow dependencies
