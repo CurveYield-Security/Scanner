@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v13  
+**Document version:** v14  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -166,7 +166,7 @@ The current implementation is Market Discovery collector v17 and workflow v6.
 - An optional GitHub Actions secret named `MORPHO_RPC_URL` can supply a read-only RPC endpoint. Otherwise the workflow discovers a public endpoint and verifies its `eth_chainId` before reading.
 - No wallet, signing key, transaction submission, contract deployment, or on-chain write path is present.
 
-This implementation materially advances the functional requirements but does not claim perfect global position completeness: source index freshness and the indexed-health-factor prefilter remain explicit limits.
+This implementation materially advances the functional requirements but does not claim perfect global position completeness: source index freshness and offset-pagination consistency remain explicit limits.
 ---
 
 ## 3. Workflow 2 — Liquidation Event Indexer
