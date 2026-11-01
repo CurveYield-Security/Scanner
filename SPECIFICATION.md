@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v5  
+**Document version:** v6  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -136,7 +136,7 @@ For each discovered candidate, store where available:
 
 ### 2.7 Market Discovery implementation status
 
-The current implementation is Market Discovery collector v8 and workflow v5.
+The current implementation is Market Discovery collector v8 and workflow v6.
 
 **Collection and persistence**
 - One run is scoped to one required EVM chain ID.
@@ -147,6 +147,7 @@ The current implementation is Market Discovery collector v8 and workflow v5.
 - The market catalogue is reused for 24 hours unless forced to refresh. Token metadata is reused; unavailable metadata is retried on subsequent runs. Immutable market-parameter verification is reused after a successful on-chain check. Position inventory and risk state are refreshed each run.
 - If market or position-index refresh fails, the previous saved dataset is retained and marked stale/incomplete rather than reported as a fresh empty result.
 - A repository-wide concurrency group serializes report commits so simultaneous chain runs cannot race while updating the shared repository.
+- Dependencies are pinned in package.json; the first workflow run creates and commits package-lock.json, and subsequent runs install from that lockfile with npm ci.
 
 **On-chain validation and risk calculations**
 - The Morpho Blue singleton address is resolved by chain ID from Morpho's maintained `@morpho-org/morpho-ts` address registry. Its bytecode is checked at the target chain.
