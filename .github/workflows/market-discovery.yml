@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v8
+# Workflow version: v9
 
 on:
   push:
@@ -78,5 +78,18 @@ jobs:
             echo "No discovery document changes to commit."
           else
             git commit -m "Save market discovery for chain ${{ github.event_name == 'push' && '747474' || inputs.chain_id }}"
-            git push
+            # The branch may have advanced after checkout (e.g. another workflow edit).
+            # Rebase the completed report commit onto the current origin before push.
+            for attempt in 1 2 3; do
+              git fetch origin main
+              git rebase origin/main
+              if git push origin HEAD:main; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "Failed to publish discovery after three safe rebases."
+                exit 1
+              fi
+              sleep $((attempt * 2))
+            done
           fi
