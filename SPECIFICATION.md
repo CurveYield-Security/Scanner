@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v2  
+**Document version:** v3  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
