@@ -90,7 +90,7 @@ async function main() {
   const maxLookbackBlocks = BigInt(process.env.MAX_READINESS_LOOKBACK_BLOCKS ?? "50000");
   if (!Number.isSafeInteger(chainId) || chainId <= 0 || !Number.isSafeInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365) throw new Error("Invalid chain or lookback");
   if (!rpcUrl) throw new Error("Missing configured RPC secret (RPC_KATANA or RPC_ETHEREUM)");
-  const morpho = getChainAddress(chainId, "blue") as Address;
+  const morpho = (chainId === 747474 ? "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc" : getChainAddress(chainId, "blue")) as Address;
   const chain = defineChain({ id: chainId, name: chainId === 747474 ? "Katana" : "Chain " + chainId,
     nativeCurrency: { name: "Native", symbol: "NATIVE", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
   const client = createPublicClient({ chain, transport: http(rpcUrl, { timeout: 60000, retryCount: 2, fetchFn: createAdaptiveRpcFetch() }) });
