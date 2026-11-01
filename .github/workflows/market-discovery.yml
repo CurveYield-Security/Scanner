@@ -24,7 +24,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: market-discovery-repository-documents
+  group: morpho-scanner-repository-documents
   cancel-in-progress: false
 
 jobs:
