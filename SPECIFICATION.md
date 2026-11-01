@@ -1,6 +1,6 @@
 # Morpho Liquidation Scanner — Functional Specification
 
-**Document version:** v9  
+**Document version:** v10  
 **Status:** Requirements specification  
 **Repository:** `CurveYield-Security/Scanner`  
 **Scope:** Morpho Blue market discovery, 90-day liquidation indexing, and harvestable-market analysis  
@@ -136,14 +136,14 @@ For each discovered candidate, store where available:
 
 ### 2.7 Market Discovery implementation status
 
-The current implementation is Market Discovery collector v13 and workflow v6.
+The current implementation is Market Discovery collector v14 and workflow v6.
 
 **Collection and persistence**
 - One run is scoped to one required EVM chain ID.
 - Morpho REST `GET /v1/blue/markets` is cursor-paginated to enumerate the selected chain's indexed Blue market catalogue.
 - Morpho GraphQL `marketPositions` is paginated without a health-factor cutoff to retain the full position inventory exposed by the index for that chain.
 - Each run writes `latest.md`, `latest.json`, and immutable timestamped Markdown/JSON snapshots under `data/market-discovery/{chain_id}/`.
-- JSON contains the full indexed position inventory, market catalogue, token metadata, on-chain market risk contexts, risk-evaluation results, source provenance, block context, configuration, and coverage status. Markdown includes the complete market catalogue, token metadata, on-chain market risk contexts, detailed evaluated risk candidates, and the indexed position inventory.
+- JSON contains the full indexed position inventory, all on-chain position assessments, the market catalogue, token metadata, on-chain market risk contexts, risk-candidate shortlist, source provenance, block context, configuration, and coverage status. Markdown includes the complete market catalogue, token metadata, on-chain market risk contexts, detailed risk candidates, and the full indexed position inventory with current and projected assessments.
 - The market catalogue is reused for 24 hours unless forced to refresh. Token metadata is reused; unavailable metadata is retried on subsequent runs. Immutable market-parameter verification is reused after a successful on-chain check. Position inventory and risk state are refreshed each run.
 - If market or position-index refresh fails, the previous saved dataset is retained and marked stale/incomplete rather than reported as a fresh empty result.
 - A repository-wide concurrency group serializes report commits so simultaneous chain runs cannot race while updating the shared repository.
@@ -152,7 +152,7 @@ The current implementation is Market Discovery collector v13 and workflow v6.
 **On-chain validation and risk calculations**
 - The Morpho Blue singleton address is resolved by chain ID from Morpho's maintained `@morpho-org/morpho-ts` address registry. Its bytecode is checked at the target chain.
 - Each market ID is checked against `keccak256(abi.encode(MarketParams))`; market parameters are then verified against the singleton's `idToMarketParams`. Verified immutable parameters are retained for later runs.
-- The workflow reads Morpho market state, oracle price, and candidate borrower positions at a recorded latest block. It uses Multicall3 for market-parameter verification where available and falls back to bounded individual read calls if the multicall path is unavailable.
+- The workflow reads Morpho market state, oracle price, and candidate borrower positions at one recorded latest block. Every on-chain call, including market-parameter checks, market state, oracle, IRM, and positions, is pinned to that same block number. It uses Multicall3 for batched reads where available and falls back to bounded individual read calls if the multicall path is unavailable.
 - Current health is evaluated with Morpho Blue's exact core rounding direction: borrow shares convert to debt assets rounding up; collateral value and LLTV borrowing capacity round down.
 - Existing unaccrued interest is simulated with Morpho's `wTaylorCompounded` formula and the market IRM's `borrowRateView`.
 - Forward eligibility uses a conditional scenario with the current oracle price and current borrow rate held constant over the configured horizon. The earliest threshold-crossing second is found by integer binary search. This is a scenario projection, not a collateral-price forecast or a guarantee of future eligibility.
