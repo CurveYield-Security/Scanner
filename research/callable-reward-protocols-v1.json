@@ -1,132 +1,188 @@
 {
-  "version": "v1",
+  "version": "v2",
   "generated_at": "2026-11-01",
   "scope": {
-    "include": "Publicly callable contract functions that pay the caller for useful protocol maintenance, harvesting, compounding, distribution, rebalancing, or analogous work.",
+    "include": "Permissionless callable maintenance functions rewarding the caller; strict final qualification requires 7-day on-chain payout and latest caller net profit.",
     "exclude": [
-      "borrower liquidation events",
-      "DEX arbitrage/trading"
+      "borrower liquidations",
+      "DEX arbitrage"
     ],
-    "chains_scanned": [
+    "chains_priority": [
       "ethereum",
       "base",
       "arbitrum"
     ],
-    "next_chain_researched": "optimism"
+    "window_utc": "2026-10-25 through 2026-11-01 UTC"
   },
-  "verified": [
+  "counts": {
+    "indexed_protocols": 20,
+    "fully_qualified_with_latest_caller_net_profit": 0,
+    "observed_reward_transfers_but_profit_not_attributable": 1,
+    "unsupported_chain": 7
+  },
+  "blockers": [
+    "Hub indexed histories returned EXPLORER_UNAVAILABLE 502 despite both API_TOKEN and ETHERSCAN_API_KEY present and authenticated RPC operational.",
+    "Ethereum eth_getLogs over larger block ranges often returned HTTP 429 on public RPC and HTTP 400 on DRPC, preventing exhaustive seven-day discovery.",
+    "Recipient router and tx EOA may differ; ETH/ERC20 value attribution requires trace and ownership before net caller profit can be asserted."
+  ],
+  "records": [
     {
       "protocol": "Beefy Finance",
-      "chain": "ethereum",
-      "functions": [
-        "callReward()",
-        "harvest()"
-      ],
-      "target": "0xDEF1be4D80a990847f8C7A1e15e824fF2749C0DE",
-      "verification": "Blockchain Operations Hub live callReward() returned non-zero"
+      "chain": "Ethereum",
+      "function": "harvest()",
+      "contract": "0xDEF1be4D80a990847f8C7A1e15e824fF2749C0DE",
+      "status": "transaction_reward_observed_profit_unresolved",
+      "source": "https://docs.beefy.finance/developer-documentation/strategy-contract",
+      "detail": "2026-10-31 tx 0x874fe63b9c29cacecf940c0adfbd123057c1949d839737cbb2ce5a2adc299ea0: 0.000034028401462443 WETH transferred strategy→calling router 0xbc6dbe2c5f172bbb736aa58cfa9bfcb20c85ffe2; gas spent 0.000049463206763321 ETH by EOA 0xd5e87f1f003f222188cc8c5aeefc8b285738b7e7. No direct ERC20 receipt to EOA; router also received CRV and crvUSD in composite transaction. Cannot determine beneficial ownership, attributed payout, or total transaction profit."
     },
     {
       "protocol": "Convex Finance",
-      "chain": "ethereum",
-      "functions": [
-        "earmarkRewards(pid)"
-      ],
-      "target": "0xF403C135812408BFbE8713b5A23a04b3D48AAE31",
-      "verification": "Blockchain Operations Hub live earmarkIncentive() returned 50"
+      "chain": "Ethereum",
+      "function": "earmarkRewards(pid)",
+      "contract": "0xF403C135812408BFbE8713b5A23a04b3D48AAE31",
+      "status": "incentive_config_verified_latest_payout_unverified",
+      "detail": "Hub earmarkIncentive() returned 50; no last-seven-day payout tx confirmed."
     },
     {
       "protocol": "Aura Finance",
-      "chain": "ethereum",
-      "functions": [
-        "earmarkRewards(pid)"
-      ],
-      "target": "0xA57b8d98dAE62B26Ec3bcC4a365338157060B234",
-      "verification": "Blockchain Operations Hub live earmarkIncentive() returned 50"
+      "chain": "Ethereum",
+      "function": "earmarkRewards(pid)",
+      "contract": "0xA57b8d98dAE62B26Ec3bcC4a365338157060B234",
+      "status": "incentive_config_verified_latest_payout_unverified",
+      "source": "https://docs.aura.finance/",
+      "detail": "Hub earmarkIncentive() returned 50; no last-seven-day payout tx confirmed."
     },
     {
       "protocol": "SMRT Protocol",
-      "chain": "ethereum",
-      "functions": [
-        "harvest()"
-      ],
-      "target": "0xDbA0a3E042b1365a76ee1e8Cbd95eaEB2B561AFC",
-      "verification": "Blockchain Operations Hub harvest() eth_call completed; public docs specify 1% keeper fee"
-    }
-  ],
-  "candidates": [
+      "chain": "Ethereum",
+      "function": "harvest()",
+      "contract": "0xDbA0a3E042b1365a76ee1e8Cbd95eaEB2B561AFC",
+      "status": "callability_verified_latest_payout_unverified",
+      "detail": "YieldDeployer harvest() eth_call succeeded; documented keeper incentive (1%), actual recent payment not established."
+    },
     {
       "protocol": "Stake DAO",
-      "chain": "ethereum",
-      "status": "high-confidence-unverified-target",
-      "evidence": "Public research reports caller incentive on harvest flow"
+      "chain": "Ethereum",
+      "function": "harvest / incentive distribution",
+      "status": "contract_target_unverified",
+      "detail": "Prior research indicates public harvest incentive; must locate active fee-paying target."
     },
     {
       "protocol": "Llama Airforce",
-      "chain": "ethereum",
-      "status": "high-confidence-unverified-target",
-      "evidence": "Public research reports 1% caller incentive on yield harvesting"
-    }
-  ],
-  "excluded": [
-    {
-      "protocol": "Yearn",
-      "reason": "No sufficiently strong current public caller-bounty evidence"
+      "chain": "Ethereum",
+      "function": "harvest",
+      "status": "contract_target_unverified",
+      "detail": "Prior research indicates 1% caller incentive; no deployed target or payout established."
     },
     {
-      "protocol": "Harvest Finance",
-      "reason": "No verified public caller bounty"
+      "protocol": "Harbor Finance",
+      "chain": "Ethereum",
+      "function": "harvest(bountyReceiver,minBounty)",
+      "contract": "0xE39165aDE355988EFb24dA4f2403971101134CAB",
+      "status": "documented_bounty_latest_payout_unverified",
+      "source": "https://docs.harborfinance.io/tech-docs/contracts/stability-pool-manager/",
+      "detail": "Documented harvest bounty paid to bountyReceiver; contract mapping is preliminary, must establish this manager live and fee paying."
     },
     {
-      "protocol": "Concentrator / AladdinDAO",
-      "reason": "Relevant harvest surface restricted to harvester role"
+      "protocol": "Suno Protocol",
+      "chain": "Ethereum (deployment unconfirmed)",
+      "function": "harvest",
+      "status": "documented_bounty_contract_target_unverified",
+      "detail": "Public audit describes harvester bounty; current chain/address/payment not established."
     },
     {
-      "protocol": "RAAC",
-      "reason": "HARVEST_ROLE required"
-    },
-    {
-      "protocol": "Sperax legacy CompoundStrategy",
-      "chain": "arbitrum",
-      "reason": "harvestIncentiveRate() currently reads 0"
-    },
-    {
-      "protocol": "Quiver Protocol",
-      "chain": "robinhood",
-      "reason": "Unsupported Hub chain"
-    },
-    {
-      "protocol": "Kerf",
-      "chain": "robinhood",
-      "reason": "Unsupported Hub chain"
-    },
-    {
-      "protocol": "Caliper",
-      "chain": "robinhood",
-      "reason": "Unsupported Hub chain"
-    },
-    {
-      "protocol": "Levee",
-      "chain": "robinhood",
-      "reason": "Unsupported Hub chain"
-    },
-    {
-      "protocol": "Arrowfarm",
-      "chain": "robinhood",
-      "reason": "Unsupported Hub chain"
-    },
-    {
-      "protocol": "EticaHub",
-      "chain": "etica",
-      "reason": "Unsupported Hub chain"
-    },
-    {
-      "protocol": "ZeroTrace",
-      "reason": "Unsupported Hub chain"
+      "protocol": "Infinite Trading",
+      "chain": "Optimism / Base",
+      "function": "harvest",
+      "status": "documented_bounty_contract_target_unverified",
+      "detail": "Vault docs describe harvest caller remuneration; live vault address/payment unverified."
     },
     {
       "protocol": "STRC",
-      "chain": "ethereum",
-      "reason": "Caller bounty documented but live mainnet target addresses not sufficiently published for Hub verification"
+      "chain": "Ethereum",
+      "function": "swapAndDistribute / harvest",
+      "status": "documented_bounty_contract_target_unverified",
+      "detail": "Documentation references keeper bounty; live deployed target and recent payout unverified."
+    },
+    {
+      "protocol": "Yeeldx",
+      "chain": "Ethereum / Arbitrum",
+      "function": "harvest",
+      "status": "documented_bounty_contract_target_unverified",
+      "source": "https://docs.yeeldx.com/products/vaults",
+      "detail": "Docs mention native-token harvest call fee on certain strategies; current vault/payment unverified."
+    },
+    {
+      "protocol": "Solid Lizard Finance",
+      "chain": "Arbitrum",
+      "function": "reinvest",
+      "contract": "0xf4ffe5e59f0B29b77b71eBFb1135F138403ACa2A",
+      "status": "historical_bounty_event_only",
+      "detail": "Historically emitted Reinvest caller/bounty event; no fresh payout established."
+    },
+    {
+      "protocol": "Based Ape Gang",
+      "chain": "Base",
+      "function": "vault buy execution",
+      "status": "documented_bounty_contract_target_unverified",
+      "source": "https://basedapes.wtf/docs/vault",
+      "detail": "Docs describe permissionless bounty for next vault buy; deployed target and last payment not verified."
+    },
+    {
+      "protocol": "Quiver Protocol",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "caller-bounty fee collection",
+      "status": "excluded_unsupported_chain",
+      "detail": "Reported call incentives; Hub currently lacks Robinhood Chain."
+    },
+    {
+      "protocol": "Kerf",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "harvest / rebalance",
+      "status": "excluded_unsupported_chain",
+      "source": "https://www.kerf.finance/docs/vaults",
+      "detail": "Docs specify 0.5% vault harvest caller bounty; unsupported Hub network."
+    },
+    {
+      "protocol": "Caliper",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "harvest / rebalance",
+      "status": "excluded_unsupported_chain",
+      "source": "https://www.caliper.finance/docs/",
+      "detail": "Docs specify policy caller bounties; unsupported Hub network."
+    },
+    {
+      "protocol": "Levee",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "harvest / rebalance",
+      "status": "excluded_unsupported_chain",
+      "source": "https://levee.trade/docs/vaults",
+      "detail": "Docs specify 0.5% vault harvest fee to caller; unsupported Hub network."
+    },
+    {
+      "protocol": "Arrowfarm",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "harvest",
+      "status": "excluded_unsupported_chain",
+      "detail": "Reported keeper fee mechanism; unsupported Hub network."
+    },
+    {
+      "protocol": "EigenYield",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "harvest(tokens)",
+      "contract": "0xb6e54f359A4F03EB02De3D75e267c7A0ea403006",
+      "status": "excluded_unsupported_chain",
+      "source": "https://www.eigenyield.me/keepers",
+      "detail": "Docs promise 0.002 ETH harvest first-caller tip; unsupported Hub network."
+    },
+    {
+      "protocol": "Nest",
+      "chain": "Robinhood Chain (unsupported)",
+      "function": "claim-vault harvest",
+      "contract": "0xf89E4cb135758DED3E56Ab5d0C57aB5EF863fc04",
+      "status": "excluded_unsupported_chain",
+      "source": "https://makeanest.fun/docs",
+      "detail": "Docs specify 1% claim-vault harvest bounty (0.02 ETH cap), contract listed is claim-vault generation, not necessarily an individual deployed claim vault; unsupported Hub network."
     }
   ]
 }
