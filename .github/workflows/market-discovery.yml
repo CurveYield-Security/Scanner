@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v2
+# Workflow version: v3
 
 on:
   workflow_dispatch:
@@ -9,12 +9,16 @@ on:
         required: true
         type: string
       forward_horizon_days:
-        description: "Forward liquidation-risk horizon in days"
+        description: "Constant-rate forward liquidation-risk horizon in days"
         required: true
         default: "30"
         type: string
+      rpc_url:
+        description: "Optional read-only RPC URL; otherwise a public endpoint is discovered and chain-id verified"
+        required: false
+        type: string
       force_market_refresh:
-        description: "Ignore saved market-catalogue cache and fetch again"
+        description: "Ignore saved market catalogue cache and fetch it again"
         required: true
         default: false
         type: boolean
@@ -29,22 +33,26 @@ concurrency:
 jobs:
   discover:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Check out saved discovery records
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - name: Collect Morpho Blue market data
+          node-version: "22"
+      - name: Install pinned read-only dependencies
+        run: npm install --no-audit --no-fund
+      - name: Collect and verify Morpho Blue market data
         env:
           CHAIN_ID: ${{ inputs.chain_id }}
           FORWARD_HORIZON_DAYS: ${{ inputs.forward_horizon_days }}
+          RPC_URL: ${{ inputs.rpc_url }}
           FORCE_MARKET_REFRESH: ${{ inputs.force_market_refresh }}
-        run: python scripts/market_discovery.py
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: npx tsx scripts/market_discovery.ts
       - name: Retain reports for future runs
         run: |
           git config user.name "github-actions[bot]"
