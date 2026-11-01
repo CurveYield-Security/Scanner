@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v5
+# Workflow version: v6
 
 on:
   workflow_dispatch:
@@ -40,7 +40,12 @@ jobs:
         with:
           node-version: "22"
       - name: Install pinned read-only dependencies
-        run: npm install --no-audit --no-fund
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
       - name: Validate Market Discovery TypeScript syntax
         run: npx esbuild scripts/market_discovery.ts --bundle --platform=node --format=esm --external:viem --external:@morpho-org/morpho-ts --outfile=/tmp/market_discovery.js
       - name: Collect and verify Morpho Blue market data
@@ -55,7 +60,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/market-discovery/
+          git add data/market-discovery/ package-lock.json
           if git diff --cached --quiet; then
             echo "No discovery document changes to commit."
           else
