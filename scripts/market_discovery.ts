@@ -245,7 +245,7 @@ async function main(){
  const topSupplyApy=markets.filter(m=>m.supply_apy_pct!==null).sort((a,b)=>b.supply_apy_pct-a.supply_apy_pct).slice(0,20);
  // Indexed USD collateral is a separate market-level snapshot. Do not infer it
  // from debt or from an incomplete borrower inventory.
- const collateralQuery="query MarketCollateral($chains:[Int!]!,$keys:[String!]!){markets(first:100,where:{chainId_in:$chains,uniqueKey_in:$keys}){items{uniqueKey state{collateralAssetsUsd borrowAssetsUsd}}}}";
+ const collateralQuery="query MarketCollateral($chains:[Int!]!,$keys:[String!]!){markets(first:100,where:{chainId_in:$chains,marketId_in:$keys}){items{marketId state{collateralAssetsUsd borrowAssetsUsd}}}}";
  const relevantMarkets=markets.filter(m=>m.supply_apy_pct!==null&&m.supply_apy_pct>1000);
  for(const m of markets){m.collateral_assets_usd=null;m.borrow_assets_usd=null;m.collateral_usd_status="not_requested_apy_le_1000";}
  for(const m of relevantMarkets)m.collateral_usd_status="unavailable_indexed_market_state";
@@ -263,7 +263,7 @@ async function main(){
  for(const x of indexedCollateral){
   if(x.error){collateralIndexError=(collateralIndexError??"")+(collateralIndexError?"; ":"")+x.error;continue;}
   for(const row of x.items){
-   const m=marketIndex.get(String(row.uniqueKey??"").toLowerCase());
+   const m=marketIndex.get(String(row.marketId??"").toLowerCase());
    if(!m)continue;
    const collateral=row.state?.collateralAssetsUsd,borrow=row.state?.borrowAssetsUsd;
    if(typeof collateral==="number"&&Number.isFinite(collateral)&&collateral>=0){
