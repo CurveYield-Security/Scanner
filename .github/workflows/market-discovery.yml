@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v11
+# Workflow version: v12
 
 on:
   push:
@@ -55,7 +55,7 @@ jobs:
         run: npx esbuild scripts/market_discovery.ts --bundle --platform=node --format=esm --external:viem --external:@morpho-org/morpho-ts --outfile=/tmp/market_discovery.js
       - name: Validate configured chain RPC secret
         env:
-          RPC_URL: ${{ (github.event_name == 'push' || inputs.chain_id == '1') && secrets.RPC_ETHEREUM || inputs.chain_id == '747474' && secrets.RPC_KATANA || '' }}
+          RPC_URL: ${{ (github.event_name == 'push' || inputs.chain_id == '747474') && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
         run: |
           if [ -z "$RPC_URL" ]; then
             echo "Missing RPC_KATANA for chain 747474 or RPC_ETHEREUM for chain 1."
@@ -63,9 +63,9 @@ jobs:
           fi
       - name: Collect Morpho Blue markets, current lending APY, and position risks
         env:
-          CHAIN_ID: ${{ github.event_name == 'push' && '1' || inputs.chain_id }}
+          CHAIN_ID: ${{ github.event_name == 'push' && '747474' || inputs.chain_id }}
           FORWARD_HORIZON_DAYS: ${{ github.event_name == 'push' && '30' || inputs.forward_horizon_days }}
-          RPC_URL: ${{ (github.event_name == 'push' || inputs.chain_id == '1') && secrets.RPC_ETHEREUM || inputs.chain_id == '747474' && secrets.RPC_KATANA || '' }}
+          RPC_URL: ${{ (github.event_name == 'push' || inputs.chain_id == '747474') && secrets.RPC_KATANA || inputs.chain_id == '1' && secrets.RPC_ETHEREUM || '' }}
           FORCE_MARKET_REFRESH: ${{ github.event_name == 'push' && 'false' || inputs.force_market_refresh }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: npx tsx scripts/market_discovery.ts
@@ -77,7 +77,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No discovery document changes to commit."
           else
-            git commit -m "Save market discovery for chain ${{ github.event_name == 'push' && '1' || inputs.chain_id }}"
+            git commit -m "Save market discovery for chain ${{ github.event_name == 'push' && '747474' || inputs.chain_id }}"
             # The branch may have advanced after checkout (e.g. another workflow edit).
             # Rebase the completed report commit onto the current origin before push.
             for attempt in 1 2 3; do
