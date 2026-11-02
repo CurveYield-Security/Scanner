@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v10
+# Workflow version: v11
 
 on:
   push:
@@ -61,7 +61,7 @@ jobs:
             echo "Missing RPC_KATANA for chain 747474 or RPC_ETHEREUM for chain 1."
             exit 1
           fi
-      - name: Collect and verify Morpho Blue market data
+      - name: Collect Morpho Blue markets, current lending APY, and position risks
         env:
           CHAIN_ID: ${{ github.event_name == 'push' && '1' || inputs.chain_id }}
           FORWARD_HORIZON_DAYS: ${{ github.event_name == 'push' && '30' || inputs.forward_horizon_days }}
