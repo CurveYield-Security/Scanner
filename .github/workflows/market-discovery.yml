@@ -1,5 +1,5 @@
 name: Market Discovery
-# Workflow version: v15
+# Workflow version: v16
 
 on:
   push:
